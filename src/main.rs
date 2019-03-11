@@ -1,25 +1,28 @@
-#![feature(plugin, decl_macro, custom_derive)]
-#![plugin(rocket_codegen)]
+#![feature(proc_macro_hygiene, decl_macro)]
 
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 extern crate badge;
 extern crate dotenv;
-#[macro_use] extern crate dotenv_codegen;
+#[macro_use]
+extern crate dotenv_codegen;
 extern crate postgres;
 extern crate r2d2;
 extern crate r2d2_postgres;
+#[macro_use]
 extern crate rocket;
 extern crate tempdir;
 extern crate tokei;
 
-use std::process::Command;
 use std::io::{self, Cursor};
+use std::process::Command;
 
 use badge::{Badge, BadgeOptions};
-use r2d2_postgres::{TlsMode, PostgresConnectionManager};
-use rocket::{Response, State};
+use r2d2_postgres::{PostgresConnectionManager, TlsMode};
 use rocket::http::{ContentType, Status};
+use rocket::request::Form;
 use rocket::response::Redirect;
+use rocket::{Response, State};
 use tempdir::TempDir;
 use tokei::{Language, Languages};
 
@@ -41,13 +44,13 @@ VALUES ($1, $2, $3, $4, $5, $6)
 
 #[derive(FromForm)]
 struct Category {
-    pub category: String
+    pub category: String,
 }
 
 impl Default for Category {
     fn default() -> Self {
         Category {
-            category: String::from("code")
+            category: String::from("code"),
         }
     }
 }
@@ -66,7 +69,6 @@ lazy_static! {
 
 macro_rules! respond {
     ($status:expr, $body:expr) => {{
-
         let mut response = Response::new();
         response.set_status($status);
         response.set_sized_body(Cursor::new($body));
@@ -75,12 +77,7 @@ macro_rules! respond {
     }};
 
     ($status:expr, $body:expr, $etag:expr) => {{
-        use rocket::http::hyper::header::{
-            CacheControl,
-            CacheDirective,
-            EntityTag,
-            ETag
-        };
+        use rocket::http::hyper::header::{CacheControl, CacheDirective, ETag, EntityTag};
 
         let mut response = Response::new();
         response.set_status($status);
@@ -89,14 +86,11 @@ macro_rules! respond {
         response.set_header(CacheControl(vec![CacheDirective::NoCache]));
         response.set_header(ETag(EntityTag::new(false, $etag)));
         Ok(response)
-    }}
+    }};
 }
 
 fn main() {
-    let manager = PostgresConnectionManager::new(
-        dotenv!("POSTGRES_URL"),
-        TlsMode::None
-    ).unwrap();
+    let manager = PostgresConnectionManager::new(dotenv!("POSTGRES_URL"), TlsMode::None).unwrap();
 
     let pool = r2d2::Pool::new(manager).unwrap();
 
@@ -112,25 +106,28 @@ fn index() -> Redirect {
 }
 
 #[get("/b1/<domain>/<user>/<repo>")]
-fn badge_no_args(domain: String,
-         user: String,
-         repo: String,
-         pool: State<r2d2::Pool<PostgresConnectionManager>>)
-    -> io::Result<Response>
-{
+fn badge_no_args(
+    domain: String,
+    user: String,
+    repo: String,
+    pool: State<r2d2::Pool<PostgresConnectionManager>>,
+) -> io::Result<Response> {
     badge(domain, user, repo, None, pool)
 }
 
-#[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn badge<'a, 'b>(domain: String,
-         user: String,
-         repo: String,
-         category: Option<Category>,
-         pool: State<r2d2::Pool<PostgresConnectionManager>>)
-    -> io::Result<Response<'b>>
-{
+#[get("/b1/<domain>/<user>/<repo>?<category..>")]
+fn badge<'a, 'b>(
+    domain: String,
+    user: String,
+    repo: String,
+    category: Option<Form<Category>>,
+    pool: State<r2d2::Pool<PostgresConnectionManager>>,
+) -> io::Result<Response<'b>> {
     let conn = pool.get().unwrap();
-    let category = category.unwrap_or(Category::default()).category;
+    let category = category
+        .map(|c| c.0)
+        .unwrap_or(Category::default())
+        .category;
     println!("{}", category);
 
     let url = format!("https://{}.com/{}/{}", domain, user, repo);
@@ -141,9 +138,7 @@ fn badge<'a, 'b>(domain: String,
         "files" => ("SELECT files FROM repo WHERE hash = $1", FILES),
         "lines" => ("SELECT lines FROM repo WHERE hash = $1", LINES),
         "comments" => ("SELECT comments FROM repo WHERE hash = $1", COMMENTS),
-        _ => {
-            return respond!(Status::BadRequest, &**ERROR_BADGE)
-        }
+        _ => return respond!(Status::BadRequest, &**ERROR_BADGE),
     };
 
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
@@ -158,7 +153,7 @@ fn badge<'a, 'b>(domain: String,
 
     for row in &rows {
         let stat: i64 = row.get(0);
-        return respond!(Status::Ok, make_badge(stat, text), (&*hash).to_owned())
+        return respond!(Status::Ok, make_badge(stat, text), (&*hash).to_owned());
     }
 
     Command::new("git")
