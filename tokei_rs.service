@@ -2,7 +2,8 @@
 Description=tokei.rs server
 
 [Service]
-ExecStart=/opt/tokei_rs
+ExecStart=/opt/tokei/tokei_rs
+WorkDir=/opt/tokei
 Restart=always
 RestartSec=10                       # Restart service after 10 seconds if node service crashes
 StandardOutput=syslog               # Output to syslog
