@@ -1,3 +1,4 @@
+# Setup script to run the Tokei.rs service on a server.
 #!/usr/bin/env bash
 cargo build --release
 

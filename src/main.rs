@@ -1,31 +1,41 @@
-#![feature(plugin, decl_macro, custom_derive)]
-#![plugin(rocket_codegen)]
+#![feature(proc_macro_hygiene, decl_macro)]
 
-#[macro_use] extern crate lazy_static;
-extern crate badge;
-extern crate dotenv;
-#[macro_use] extern crate dotenv_codegen;
-extern crate postgres;
-extern crate r2d2;
-extern crate r2d2_postgres;
-extern crate rocket;
-extern crate tempdir;
-extern crate tokei;
+#[macro_use] extern crate rocket;
 
-use std::process::Command;
-use std::io::{self, Cursor};
+use std::{env, io::{self, Cursor}, path::PathBuf, process::Command};
 
 use badge::{Badge, BadgeOptions};
+use lazy_static::lazy_static;
 use r2d2_postgres::{TlsMode, PostgresConnectionManager};
-use rocket::{Response, State};
-use rocket::http::{ContentType, Status};
-use rocket::response::Redirect;
-use tempdir::TempDir;
-use tokei::{Language, Languages};
+use rocket::{
+    Response,
+    State,
+    http::{Accept, ContentType, Status},
+    response::Redirect,
+};
+use tempfile::TempDir;
+use tokei::{Language, Languages, Stats};
 
-const BILLION: i64 = 1_000_000_000;
-const MILLION: i64 = 1_000_000;
-const THOUSAND: i64 = 1_000;
+type Result<T> = std::result::Result<T, failure::Error>;
+
+const SELECT_STATS: &str = "
+SELECT blanks, code, comments, files, lines FROM repo WHERE hash = $1";
+const SELECT_FILES: &str = "
+SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
+const INSERT_STATS: &'static str = r#"
+INSERT INTO repo (hash, blanks, code, comments, lines, files)
+VALUES ($1, $2, $3, $4, $5, $6)
+"#;
+
+const INSERT_FILES: &'static str = r#"
+INSERT INTO stats (hash, blanks, code, comments, lines, name)
+VALUES ($1, $2, $3, $4, $5, $6)
+"#;
+
+
+const BILLION: usize = 1_000_000_000;
+const MILLION: usize = 1_000_000;
+const THOUSAND: usize = 1_000;
 
 const BLANKS: &'static str = "Blank lines";
 const BLUE: &'static str = "#007ec6";
@@ -34,29 +44,11 @@ const COMMENTS: &'static str = "Comments";
 const FILES: &'static str = "Files";
 const LINES: &'static str = "Total lines";
 const RED: &'static str = "#e05d44";
-const INSERT: &'static str = r#"
-INSERT INTO repo (hash, code, lines, blanks, files, comments)
-VALUES ($1, $2, $3, $4, $5, $6)
-"#;
-
-#[derive(FromForm)]
-struct Category {
-    pub category: String
-}
-
-impl Default for Category {
-    fn default() -> Self {
-        Category {
-            category: String::from("code")
-        }
-    }
-}
-
 lazy_static! {
     static ref ERROR_BADGE: String = {
         let options = BadgeOptions {
             subject: String::from("Error"),
-            status: String::from("Url incorrect"),
+            status: String::from("Incorrect URL"),
             color: String::from(RED),
         };
 
@@ -74,7 +66,7 @@ macro_rules! respond {
         Ok(response)
     }};
 
-    ($status:expr, $body:expr, $etag:expr) => {{
+    ($status:expr, $accept:expr, $body:expr, $etag:expr) => {{
         use rocket::http::hyper::header::{
             CacheControl,
             CacheDirective,
@@ -85,7 +77,11 @@ macro_rules! respond {
         let mut response = Response::new();
         response.set_status($status);
         response.set_sized_body(Cursor::new($body));
-        response.set_header(ContentType::SVG);
+        response.set_header(if *$accept == Accept::JSON {
+            ContentType::JSON
+        } else {
+            ContentType::SVG
+        });
         response.set_header(CacheControl(vec![CacheDirective::NoCache]));
         response.set_header(ETag(EntityTag::new(false, $etag)));
         Ok(response)
@@ -93,8 +89,9 @@ macro_rules! respond {
 }
 
 fn main() {
+    dotenv::dotenv().unwrap();
     let manager = PostgresConnectionManager::new(
-        dotenv!("POSTGRES_URL"),
+        env::var("POSTGRES_URL").unwrap(),
         TlsMode::None
     ).unwrap();
 
@@ -102,7 +99,7 @@ fn main() {
 
     rocket::ignite()
         .manage(pool)
-        .mount("/", routes![index, badge, badge_no_args])
+        .mount("/", routes![index, badge])
         .launch();
 }
 
@@ -111,71 +108,82 @@ fn index() -> Redirect {
     Redirect::permanent("https://github.com/Aaronepower/tokei")
 }
 
-#[get("/b1/<domain>/<user>/<repo>")]
-fn badge_no_args(domain: String,
-         user: String,
-         repo: String,
-         pool: State<r2d2::Pool<PostgresConnectionManager>>)
-    -> io::Result<Response>
-{
-    badge(domain, user, repo, None, pool)
-}
-
 #[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn badge<'a, 'b>(domain: String,
-         user: String,
-         repo: String,
-         category: Option<Category>,
-         pool: State<r2d2::Pool<PostgresConnectionManager>>)
-    -> io::Result<Response<'b>>
+fn badge<'a, 'b>(accept_header: &Accept,
+                 domain: String,
+                 user: String,
+                 repo: String,
+                 category: Option<String>,
+                 pool: State<r2d2::Pool<PostgresConnectionManager>>)
+    -> Result<Response<'b>>
 {
     let conn = pool.get().unwrap();
-    let category = category.unwrap_or(Category::default()).category;
-    println!("{}", category);
-
+    let category = category.unwrap_or_else(|| String::from("code"));
     let url = format!("https://{}.com/{}/{}", domain, user, repo);
-
-    let (select_query, text) = match &*category {
-        "code" => ("SELECT code FROM repo WHERE hash = $1", CODE),
-        "blanks" => ("SELECT blanks FROM repo WHERE hash = $1", BLANKS),
-        "files" => ("SELECT files FROM repo WHERE hash = $1", FILES),
-        "lines" => ("SELECT lines FROM repo WHERE hash = $1", LINES),
-        "comments" => ("SELECT comments FROM repo WHERE hash = $1", COMMENTS),
-        _ => {
-            return respond!(Status::BadRequest, &**ERROR_BADGE)
-        }
-    };
-
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
-
     let stdout = ls_remote.stdout;
-    let end_of_sha = stdout.iter().position(|&b| b == b'\t').unwrap_or(0);
+    let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
+        Some(index) => index,
+        None => return respond!(Status::BadRequest, &**ERROR_BADGE),
+    };
     let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
-    let select = conn.prepare_cached(select_query)?;
+    let select = conn.prepare_cached(SELECT_STATS)?;
     let rows = select.query(&[&&*hash])?;
-    let temp_dir = TempDir::new("repo")?;
-    let temp_path = temp_dir.path().to_str().unwrap();
 
-    for row in &rows {
-        let stat: i64 = row.get(0);
-        return respond!(Status::Ok, make_badge(stat, text), (&*hash).to_owned())
+    if let Some(row) = rows.iter().next() {
+        let mut stats: Language = Language::new();
+
+        let select_files = conn.prepare_cached(SELECT_FILES)?;
+
+        for row in select_files.query(&[&&*hash])?.iter() {
+            let mut stat = Stats::new(PathBuf::from(row.get::<_, String>(0)));
+            stat.blanks = row.get::<_, i64>(1) as usize;
+            stat.code = row.get::<_, i64>(2) as usize;
+            stat.comments = row.get::<_, i64>(3) as usize;
+            stat.lines = row.get::<_, i64>(4) as usize;
+
+            stats.stats.push(stat);
+        }
+
+        stats.blanks = row.get::<_, i64>(1) as usize;
+        stats.code = row.get::<_, i64>(2) as usize;
+        stats.comments = row.get::<_, i64>(3) as usize;
+        stats.lines = row.get::<_, i64>(4) as usize;
+
+        return respond!(Status::Ok, accept_header, make_badge(accept_header, stats, category)?, (&*hash).to_owned())
     }
+
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
         .args(&["clone", &url, &temp_path, "--depth", "1"])
         .output()?;
 
+    let mut stats = Language::new();
     let mut languages = Languages::new();
-    languages.get_statistics(vec![temp_path], Vec::new());
-
-    let mut stats = Language::new_blank();
+    languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
     for (_, language) in languages {
         stats += language;
     }
 
-    let insert = conn.prepare_cached(INSERT).unwrap();
-    insert.execute(&[
+    let insert_files = conn.prepare_cached(INSERT_FILES)?;
+
+    for stat in &mut stats.stats {
+        stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
+        insert_files.execute(&[
+            &&*hash,
+            &(stat.blanks as i64),
+            &(stat.code as i64),
+            &(stat.comments as i64),
+            &(stat.lines as i64),
+            &stat.name.to_str().unwrap(),
+        ])?;
+    }
+
+    let insert_stats = conn.prepare_cached(INSERT_STATS).unwrap();
+    insert_stats.execute(&[
         &&*hash,
         &(stats.code as i64),
         &(stats.lines as i64),
@@ -184,23 +192,31 @@ fn badge<'a, 'b>(domain: String,
         &(stats.comments as i64),
     ])?;
 
-    let stat = match &*category {
+    respond!(Status::Ok,
+             accept_header,
+             make_badge(accept_header, stats, category)?,
+             (&*hash).to_owned())
+}
+
+fn trim_and_float(num: usize, trim: usize) -> f64 {
+    (num as f64) / (trim as f64)
+}
+
+fn make_badge(accept: &Accept, stats: Language, category: String)
+    -> Result<String>
+{
+    if *accept == Accept::JSON {
+        return Ok(serde_json::to_string(&stats)?)
+    }
+
+    let amount = match &*category {
         "code" => stats.code,
-        "lines" => stats.lines,
-        "blanks" => stats.blanks,
         "files" => stats.stats.len(),
+        "blanks" => stats.blanks,
         "comments" => stats.comments,
-        _ => unreachable!(),
-    } as i64;
+        _ => stats.lines,
+    };
 
-    respond!(Status::Ok, make_badge(stat, text), (&*hash).to_owned())
-}
-
-fn trim_and_float(num: i64, trim: i64) -> f64 {
-    num as f64 / trim as f64
-}
-
-fn make_badge(amount: i64, category: &str) -> String {
     let amount = if amount >= BILLION {
         format!("{:.1}B", trim_and_float(amount, BILLION))
     } else if amount >= MILLION {
@@ -217,5 +233,5 @@ fn make_badge(amount: i64, category: &str) -> String {
         color: String::from(BLUE),
     };
 
-    Badge::new(options).unwrap().to_svg()
+    Ok(Badge::new(options).unwrap().to_svg())
 }

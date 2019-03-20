@@ -1,4 +1,5 @@
 30 03 01 */3 * sudo -u tokei_rs psql -c "DELETE * FROM repo" >/dev/null 2>&1
+30 03 01 */3 * sudo -u tokei_rs psql -c "DELETE * FROM stats" >/dev/null 2>&1
 0 0 1 1-11/2 0 systemctl stop tokei_rs.service >/dev/null 2>&1
 1 0 1 1-11/2 0 certbot renew >/dev/null 2>&1
 5 0 1 1-11/2 0 systemctl start tokei_rs.service >/dev/null 2>&1
