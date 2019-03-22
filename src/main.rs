@@ -19,12 +19,12 @@ use tokei::{Language, Languages, Stats};
 type Result<T> = std::result::Result<T, failure::Error>;
 
 const SELECT_STATS: &str = "
-SELECT blanks, code, comments, files, lines FROM repo WHERE hash = $1";
+SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
 const SELECT_FILES: &str = "
 SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
 const INSERT_STATS: &'static str = r#"
-INSERT INTO repo (hash, blanks, code, comments, lines, files)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO repo (hash, blanks, code, comments, lines)
+VALUES ($1, $2, $3, $4, $5)
 "#;
 
 const INSERT_FILES: &'static str = r#"
@@ -145,10 +145,10 @@ fn badge<'a, 'b>(accept_header: &Accept,
             stats.stats.push(stat);
         }
 
-        stats.blanks = row.get::<_, i64>(1) as usize;
-        stats.code = row.get::<_, i64>(2) as usize;
-        stats.comments = row.get::<_, i64>(3) as usize;
-        stats.lines = row.get::<_, i64>(4) as usize;
+        stats.blanks = row.get::<_, i64>(0) as usize;
+        stats.code = row.get::<_, i64>(1) as usize;
+        stats.comments = row.get::<_, i64>(2) as usize;
+        stats.lines = row.get::<_, i64>(3) as usize;
 
         return respond!(Status::Ok, accept_header, make_badge(accept_header, stats, category)?, (&*hash).to_owned())
     }
@@ -185,11 +185,10 @@ fn badge<'a, 'b>(accept_header: &Accept,
     let insert_stats = conn.prepare_cached(INSERT_STATS).unwrap();
     insert_stats.execute(&[
         &&*hash,
-        &(stats.code as i64),
-        &(stats.lines as i64),
         &(stats.blanks as i64),
-        &(stats.stats.len() as i64),
+        &(stats.code as i64),
         &(stats.comments as i64),
+        &(stats.lines as i64),
     ])?;
 
     respond!(Status::Ok,
