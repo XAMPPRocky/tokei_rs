@@ -39,7 +39,7 @@ const THOUSAND: usize = 1_000;
 
 const BLANKS: &'static str = "Blank lines";
 const BLUE: &'static str = "#007ec6";
-const CODE: &'static str = "LoC";
+const CODE: &'static str = "Loc";
 const COMMENTS: &'static str = "Comments";
 const FILES: &'static str = "Files";
 const LINES: &'static str = "Total lines";
@@ -118,7 +118,12 @@ fn badge<'a, 'b>(accept_header: &Accept,
     -> Result<Response<'b>>
 {
     let conn = pool.get().unwrap();
-    let category = category.unwrap_or_else(|| String::from("code"));
+    let category = match category.as_ref().map(|x| &**x) {
+        Some("code") => CODE,
+        Some("blanks") => BLANKS,
+        Some("comments") => COMMENTS,
+        _ => LINES,
+    };
     let url = format!("https://{}.com/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let stdout = ls_remote.stdout;
@@ -201,7 +206,7 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge(accept: &Accept, stats: Language, category: String)
+fn make_badge(accept: &Accept, stats: Language, category: &str)
     -> Result<String>
 {
     if *accept == Accept::JSON {
