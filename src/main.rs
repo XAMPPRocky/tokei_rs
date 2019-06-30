@@ -110,12 +110,8 @@ fn badge<'a, 'b>(accept_header: &Accept,
     -> Result<Response<'b>>
 {
     let conn = pool.get().unwrap();
-    let category = match category.as_ref().map(|x| &**x) {
-        Some("code") => CODE,
-        Some("blanks") => BLANKS,
-        Some("comments") => COMMENTS,
-        _ => LINES,
-    };
+    let category = category.unwrap_or(String::from("lines"));
+
     let url = format!("https://{}.com/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let stdout = ls_remote.stdout;
@@ -147,7 +143,7 @@ fn badge<'a, 'b>(accept_header: &Accept,
         stats.comments = row.get::<_, i64>(2) as usize;
         stats.lines = row.get::<_, i64>(3) as usize;
 
-        return respond!(Status::Ok, accept_header, make_badge(accept_header, stats, category)?, (&*hash).to_owned())
+        return respond!(Status::Ok, accept_header, make_badge(accept_header, stats, &category)?, (&*hash).to_owned())
     }
 
     let temp_dir = TempDir::new()?;
@@ -190,7 +186,7 @@ fn badge<'a, 'b>(accept_header: &Accept,
 
     respond!(Status::Ok,
              accept_header,
-             make_badge(accept_header, stats, category)?,
+             make_badge(accept_header, stats, &category)?,
              (&*hash).to_owned())
 }
 
@@ -205,12 +201,12 @@ fn make_badge(accept: &Accept, stats: Language, category: &str)
         return Ok(serde_json::to_string(&stats)?)
     }
 
-    let amount = match &*category {
-        "code" => stats.code,
-        "files" => stats.stats.len(),
-        "blanks" => stats.blanks,
-        "comments" => stats.comments,
-        _ => stats.lines,
+    let (amount, label) = match &*category {
+        "code" => (stats.code, CODE),
+        "files" => (stats.stats.len(), FILES),
+        "blanks" => (stats.blanks, BLANKS),
+        "comments" => (stats.comments, COMMENTS),
+        _ => (stats.lines, LINES),
     };
 
     let amount = if amount >= BILLION {
@@ -224,7 +220,7 @@ fn make_badge(accept: &Accept, stats: Language, category: &str)
     };
 
     let options = BadgeOptions {
-        subject: String::from(category),
+        subject: String::from(label),
         status: amount,
         color: String::from(BLUE),
     };
