@@ -2,7 +2,7 @@
 
 #[macro_use] extern crate rocket;
 
-use std::{env, io::{self, Cursor}, path::PathBuf, process::Command};
+use std::{env, io::Cursor, path::PathBuf, process::Command};
 
 use badge::{Badge, BadgeOptions};
 use lazy_static::lazy_static;
@@ -17,33 +17,25 @@ use tempfile::TempDir;
 use tokei::{Language, Languages, Stats};
 
 type Result<T> = std::result::Result<T, failure::Error>;
-
-const SELECT_STATS: &str = "
-SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
-const SELECT_FILES: &str = "
-SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
-const INSERT_STATS: &'static str = r#"
-INSERT INTO repo (hash, blanks, code, comments, lines)
-VALUES ($1, $2, $3, $4, $5)
-"#;
-
-const INSERT_FILES: &'static str = r#"
-INSERT INTO stats (hash, blanks, code, comments, lines, name)
-VALUES ($1, $2, $3, $4, $5, $6)
-"#;
-
-
+const SELECT_STATS: &str =
+"SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
+const SELECT_FILES: &str =
+"SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
+const INSERT_STATS: &str =
+r#"INSERT INTO repo (hash, blanks, code, comments, lines) VALUES ($1, $2, $3, $4, $5)"#;
+const INSERT_FILES: &str =
+r#"INSERT INTO stats (hash, blanks, code, comments, lines, name) VALUES ($1, $2, $3, $4, $5, $6)"#;
 const BILLION: usize = 1_000_000_000;
 const MILLION: usize = 1_000_000;
 const THOUSAND: usize = 1_000;
+const BLANKS: &str = "Blank lines";
+const BLUE: &str = "#007ec6";
+const CODE: &str = "Loc";
+const COMMENTS: &str = "Comments";
+const FILES: &str = "Files";
+const LINES: &str = "Total lines";
+const RED: &str = "#e05d44";
 
-const BLANKS: &'static str = "Blank lines";
-const BLUE: &'static str = "#007ec6";
-const CODE: &'static str = "Loc";
-const COMMENTS: &'static str = "Comments";
-const FILES: &'static str = "Files";
-const LINES: &'static str = "Total lines";
-const RED: &'static str = "#e05d44";
 lazy_static! {
     static ref ERROR_BADGE: String = {
         let options = BadgeOptions {
