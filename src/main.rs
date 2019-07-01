@@ -28,12 +28,12 @@ r#"INSERT INTO stats (hash, blanks, code, comments, lines, name) VALUES ($1, $2,
 const BILLION: usize = 1_000_000_000;
 const MILLION: usize = 1_000_000;
 const THOUSAND: usize = 1_000;
-const BLANKS: &str = "Blank lines";
+const BLANKS: &str = "blank lines";
 const BLUE: &str = "#007ec6";
-const CODE: &str = "Loc";
-const COMMENTS: &str = "Comments";
-const FILES: &str = "Files";
-const LINES: &str = "Total lines";
+const CODE: &str = "lines of code";
+const COMMENTS: &str = "comments";
+const FILES: &str = "files";
+const LINES: &str = "total lines";
 const RED: &str = "#e05d44";
 
 lazy_static! {
