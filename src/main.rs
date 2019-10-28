@@ -1,30 +1,27 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
 
 use std::{env, io::Cursor, path::PathBuf, process::Command};
 
 use badge::{Badge, BadgeOptions};
 use lazy_static::lazy_static;
-use r2d2_postgres::{TlsMode, PostgresConnectionManager};
+use r2d2_postgres::{PostgresConnectionManager, TlsMode};
 use rocket::{
-    Response,
-    State,
-    http::{Accept, ContentType, Status},
+    http::{hyper::header::EntityTag, Accept, ContentType, Status},
     response::Redirect,
+    Response, State,
 };
 use tempfile::TempDir;
 use tokei::{Language, Languages, Stats};
 
 type Result<T> = std::result::Result<T, failure::Error>;
-const SELECT_STATS: &str =
-"SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
-const SELECT_FILES: &str =
-"SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
+const SELECT_STATS: &str = "SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
+const SELECT_FILES: &str = "SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
 const INSERT_STATS: &str =
-r#"INSERT INTO repo (hash, blanks, code, comments, lines) VALUES ($1, $2, $3, $4, $5)"#;
-const INSERT_FILES: &str =
-r#"INSERT INTO stats (hash, blanks, code, comments, lines, name) VALUES ($1, $2, $3, $4, $5, $6)"#;
+    r#"INSERT INTO repo (hash, blanks, code, comments, lines) VALUES ($1, $2, $3, $4, $5)"#;
+const INSERT_FILES: &str = r#"INSERT INTO stats (hash, blanks, code, comments, lines, name) VALUES ($1, $2, $3, $4, $5, $6)"#;
 const BILLION: usize = 1_000_000_000;
 const MILLION: usize = 1_000_000;
 const THOUSAND: usize = 1_000;
@@ -49,8 +46,13 @@ lazy_static! {
 }
 
 macro_rules! respond {
-    ($status:expr, $body:expr) => {{
+    ($status:expr) => {{
+        let mut response = Response::new();
+        response.set_status($status);
+        Ok(response)
+    }};
 
+    ($status:expr, $body:expr) => {{
         let mut response = Response::new();
         response.set_status($status);
         response.set_sized_body(Cursor::new($body));
@@ -59,12 +61,7 @@ macro_rules! respond {
     }};
 
     ($status:expr, $accept:expr, $body:expr, $etag:expr) => {{
-        use rocket::http::hyper::header::{
-            CacheControl,
-            CacheDirective,
-            EntityTag,
-            ETag
-        };
+        use rocket::http::hyper::header::{CacheControl, CacheDirective, ETag};
 
         let mut response = Response::new();
         response.set_status($status);
@@ -77,15 +74,13 @@ macro_rules! respond {
         response.set_header(CacheControl(vec![CacheDirective::NoCache]));
         response.set_header(ETag(EntityTag::new(false, $etag)));
         Ok(response)
-    }}
+    }};
 }
 
 fn main() {
     dotenv::dotenv().unwrap();
-    let manager = PostgresConnectionManager::new(
-        env::var("POSTGRES_URL").unwrap(),
-        TlsMode::None
-    ).unwrap();
+    let manager =
+        PostgresConnectionManager::new(env::var("POSTGRES_URL").unwrap(), TlsMode::None).unwrap();
 
     let pool = r2d2::Pool::new(manager).unwrap();
 
@@ -100,19 +95,45 @@ fn index() -> Redirect {
     Redirect::permanent("https://github.com/XAMPPRocky/tokei")
 }
 
+struct IfNoneMatch(Option<EntityTag>);
+
+impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
+    type Error = ();
+
+    fn from_request(
+        request: &'a rocket::Request<'r>,
+    ) -> rocket::request::Outcome<Self, Self::Error> {
+        rocket::Outcome::Success(Self(
+            request
+                .headers()
+                .get("If-None-Match")
+                .next()
+                .and_then(|s| s.parse().ok()),
+        ))
+    }
+}
+
 #[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn badge<'a, 'b>(accept_header: &Accept,
-                 domain: String,
-                 user: String,
-                 repo: String,
-                 category: Option<String>,
-                 pool: State<r2d2::Pool<PostgresConnectionManager>>)
-    -> Result<Response<'b>>
-{
+fn badge<'a, 'b>(
+    accept_header: &Accept,
+    if_none_match: IfNoneMatch,
+    domain: String,
+    user: String,
+    repo: String,
+    category: Option<String>,
+    pool: State<r2d2::Pool<PostgresConnectionManager>>,
+) -> Result<Response<'b>> {
     let conn = pool.get().unwrap();
     let category = category.unwrap_or(String::from("lines"));
 
-    let url = format!("https://{}.com/{}/{}", domain, user, repo);
+    let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
+
+    // For backwards compatability if a domain isn't specified we append `.com`.
+    if !domain.contains(".") {
+        domain += ".com";
+    }
+
+    let url = format!("https://{}/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let stdout = ls_remote.stdout;
     let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
@@ -120,6 +141,14 @@ fn badge<'a, 'b>(accept_header: &Accept,
         None => return respond!(Status::BadRequest, &**ERROR_BADGE),
     };
     let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
+
+    if let IfNoneMatch(Some(etag)) = if_none_match {
+        let hash = EntityTag::new(false, hash.to_owned().into_owned());
+        if hash == etag {
+            return respond!(Status::NotModified);
+        }
+    }
+
     let select = conn.prepare_cached(SELECT_STATS)?;
     let rows = select.query(&[&&*hash])?;
 
@@ -143,7 +172,12 @@ fn badge<'a, 'b>(accept_header: &Accept,
         stats.comments = row.get::<_, i64>(2) as usize;
         stats.lines = row.get::<_, i64>(3) as usize;
 
-        return respond!(Status::Ok, accept_header, make_badge(accept_header, stats, &category)?, (&*hash).to_owned())
+        return respond!(
+            Status::Ok,
+            accept_header,
+            make_badge(accept_header, stats, &category)?,
+            (&*hash).to_owned()
+        );
     }
 
     let temp_dir = TempDir::new()?;
@@ -184,21 +218,21 @@ fn badge<'a, 'b>(accept_header: &Accept,
         &(stats.lines as i64),
     ])?;
 
-    respond!(Status::Ok,
-             accept_header,
-             make_badge(accept_header, stats, &category)?,
-             (&*hash).to_owned())
+    respond!(
+        Status::Ok,
+        accept_header,
+        make_badge(accept_header, stats, &category)?,
+        (&*hash).to_owned()
+    )
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge(accept: &Accept, stats: Language, category: &str)
-    -> Result<String>
-{
+fn make_badge(accept: &Accept, stats: Language, category: &str) -> Result<String> {
     if *accept == Accept::JSON {
-        return Ok(serde_json::to_string(&stats)?)
+        return Ok(serde_json::to_string(&stats)?);
     }
 
     let (amount, label) = match &*category {
