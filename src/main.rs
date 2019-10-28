@@ -139,7 +139,7 @@ fn badge<'a, 'b>(
 
     if let IfNoneMatch(Some(etag)) = if_none_match {
         let hash = EntityTag::new(false, hash.to_owned().into_owned());
-        if hash == etag {
+        if hash.weak_eq(&etag) {
             return respond!(Status::NotModified);
         }
     }
