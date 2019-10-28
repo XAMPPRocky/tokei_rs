@@ -97,7 +97,7 @@ fn main() {
 
 #[get("/")]
 fn index() -> Redirect {
-    Redirect::permanent("https://github.com/Aaronepower/tokei")
+    Redirect::permanent("https://github.com/XAMPPRocky/tokei")
 }
 
 #[get("/b1/<domain>/<user>/<repo>?<category>")]
