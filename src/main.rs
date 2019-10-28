@@ -3,35 +3,33 @@
 #[macro_use]
 extern crate rocket;
 
-use std::{env, io::Cursor, path::PathBuf, process::Command};
+use std::{env, io::Cursor, process::Command};
 
 use badge::{Badge, BadgeOptions};
 use lazy_static::lazy_static;
-use r2d2_postgres::{PostgresConnectionManager, TlsMode};
+use r2d2_redis::RedisConnectionManager;
+use redis::Commands;
 use rocket::{
     http::{hyper::header::EntityTag, Accept, ContentType, Status},
     response::Redirect,
     Response, State,
 };
 use tempfile::TempDir;
-use tokei::{Language, Languages, Stats};
+use tokei::{Language, Languages};
 
 type Result<T> = std::result::Result<T, failure::Error>;
-const SELECT_STATS: &str = "SELECT blanks, code, comments, lines FROM repo WHERE hash = $1";
-const SELECT_FILES: &str = "SELECT name, blanks, code, comments, lines FROM stats WHERE hash = $1";
-const INSERT_STATS: &str =
-    r#"INSERT INTO repo (hash, blanks, code, comments, lines) VALUES ($1, $2, $3, $4, $5)"#;
-const INSERT_FILES: &str = r#"INSERT INTO stats (hash, blanks, code, comments, lines, name) VALUES ($1, $2, $3, $4, $5, $6)"#;
+
 const BILLION: usize = 1_000_000_000;
-const MILLION: usize = 1_000_000;
-const THOUSAND: usize = 1_000;
 const BLANKS: &str = "blank lines";
 const BLUE: &str = "#007ec6";
 const CODE: &str = "lines of code";
 const COMMENTS: &str = "comments";
 const FILES: &str = "files";
+const HASH_LENGTH: usize = 40;
 const LINES: &str = "total lines";
+const MILLION: usize = 1_000_000;
 const RED: &str = "#e05d44";
+const THOUSAND: usize = 1_000;
 
 lazy_static! {
     static ref ERROR_BADGE: String = {
@@ -43,6 +41,7 @@ lazy_static! {
 
         Badge::new(options).unwrap().to_svg()
     };
+    static ref REDIS_URL: String = env::var("REDIS_URL").unwrap();
 }
 
 macro_rules! respond {
@@ -79,11 +78,8 @@ macro_rules! respond {
 
 fn main() {
     dotenv::dotenv().unwrap();
-    let manager =
-        PostgresConnectionManager::new(env::var("POSTGRES_URL").unwrap(), TlsMode::None).unwrap();
-
-    let pool = r2d2::Pool::new(manager).unwrap();
-
+    let manager = RedisConnectionManager::new(&**REDIS_URL).unwrap();
+    let pool = r2d2::Pool::builder().build(manager).unwrap();
     rocket::ignite()
         .manage(pool)
         .mount("/", routes![index, badge])
@@ -121,9 +117,8 @@ fn badge<'a, 'b>(
     user: String,
     repo: String,
     category: Option<String>,
-    pool: State<r2d2::Pool<PostgresConnectionManager>>,
+    pool: State<r2d2::Pool<RedisConnectionManager>>,
 ) -> Result<Response<'b>> {
-    let conn = pool.get().unwrap();
     let category = category.unwrap_or(String::from("lines"));
 
     let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
@@ -137,8 +132,8 @@ fn badge<'a, 'b>(
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let stdout = ls_remote.stdout;
     let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
-        Some(index) => index,
-        None => return respond!(Status::BadRequest, &**ERROR_BADGE),
+        Some(index) if index == HASH_LENGTH => index,
+        _ => return respond!(Status::BadRequest, &**ERROR_BADGE),
     };
     let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
 
@@ -149,29 +144,12 @@ fn badge<'a, 'b>(
         }
     }
 
-    let select = conn.prepare_cached(SELECT_STATS)?;
-    let rows = select.query(&[&&*hash])?;
+    let mut redis = pool.get()?;
 
-    if let Some(row) = rows.iter().next() {
-        let mut stats: Language = Language::new();
-
-        let select_files = conn.prepare_cached(SELECT_FILES)?;
-
-        for row in select_files.query(&[&&*hash])?.iter() {
-            let mut stat = Stats::new(PathBuf::from(row.get::<_, String>(0)));
-            stat.blanks = row.get::<_, i64>(1) as usize;
-            stat.code = row.get::<_, i64>(2) as usize;
-            stat.comments = row.get::<_, i64>(3) as usize;
-            stat.lines = row.get::<_, i64>(4) as usize;
-
-            stats.stats.push(stat);
-        }
-
-        stats.blanks = row.get::<_, i64>(0) as usize;
-        stats.code = row.get::<_, i64>(1) as usize;
-        stats.comments = row.get::<_, i64>(2) as usize;
-        stats.lines = row.get::<_, i64>(3) as usize;
-
+    if let Some(stats) = redis
+        .get::<_, Option<String>>(&*hash)?
+        .and_then(|s| serde_json::from_str::<Language>(&s).ok())
+    {
         return respond!(
             Status::Ok,
             accept_header,
@@ -195,28 +173,11 @@ fn badge<'a, 'b>(
         stats += language;
     }
 
-    let insert_files = conn.prepare_cached(INSERT_FILES)?;
-
     for stat in &mut stats.stats {
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
-        insert_files.execute(&[
-            &&*hash,
-            &(stat.blanks as i64),
-            &(stat.code as i64),
-            &(stat.comments as i64),
-            &(stat.lines as i64),
-            &stat.name.to_str().unwrap(),
-        ])?;
     }
 
-    let insert_stats = conn.prepare_cached(INSERT_STATS).unwrap();
-    insert_stats.execute(&[
-        &&*hash,
-        &(stats.blanks as i64),
-        &(stats.code as i64),
-        &(stats.comments as i64),
-        &(stats.lines as i64),
-    ])?;
+    redis.set(&*hash, serde_json::to_string(&stats)?)?;
 
     respond!(
         Status::Ok,

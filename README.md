@@ -10,18 +10,19 @@ tokei.rs has support for badges. For example
 Tokei's URL scheme is as follows.
 
 ```
-https://tokei.rs/<host>/<namespace>/<name>
+https://tokei.rs/b1/<domain>[<.com>]?/<namespace>/<repository>
 ```
 
-- `host`: either `github` or `gitlab`.
+- `domain`:  The domain name of git host. If no TLD is provided `.com` is added.
+  e.g. `tokei.rs/b1/github` == `tokei.rs/b1/github.com`.
 - `namespace`: The namespace of the repo. eg. `rust-lang` or `XAMPPRocky`.
-- `name`: the name of the repo eg. `rust` or `tokei`.
+- `repository`: the name of the repo eg. `rust` or `tokei`.
 
-By default the badge will show the repo's LoC(_Lines of Code_), you can also
+By default the badge will show the repo's total lines, you can also
 specify for it to show a different category, by using the `?category=` query
 string. It can be either `code`, `blanks`, `files`, `lines`, or `comments`.
-Here is an example showing total number of lines.
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=lines)](https://github.com/XAMPPRocky/tokei).
+Here is an example showing total number of code.
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code)](https://github.com/XAMPPRocky/tokei).
 
 ```
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=lines)](https://github.com/XAMPPRocky/tokei).
