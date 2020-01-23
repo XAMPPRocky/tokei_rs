@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "r2d2"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -981,7 +981,7 @@ name = "r2d2_redis"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "r2d2 0.8.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "r2d2 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "redis 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1563,7 +1563,7 @@ dependencies = [
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "mime 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "r2d2 0.8.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "r2d2 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "r2d2_redis 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "redis 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rocket 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1993,7 +1993,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum quick-error 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "9274b940887ce9addde99c4eee6b5c44cc494b182b97e73dc8ffdcb3397fd3f0"
 "checksum quote 0.6.12 (registry+https://github.com/rust-lang/crates.io-index)" = "faf4799c5d274f3868a4aae320a0a182cbd2baee377b378f080e16a23e9d80db"
 "checksum quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "053a8c8bcc71fcce321828dc897a98ab9760bef03a4fc36693c231e5b3216cfe"
-"checksum r2d2 0.8.7 (registry+https://github.com/rust-lang/crates.io-index)" = "22b5c5fc5fba064373f03887337b412e0e1562d63023393db77251146cb75553"
+"checksum r2d2 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)" = "1497e40855348e4a8a40767d8e55174bce1e445a3ac9254ad44ad468ee0485af"
 "checksum r2d2_redis 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1d8ff6a258769033b4e3c1e895f9f8b0aa47b6f49403e54591745e8a943e1a67"
 "checksum rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)" = "6d71dacdc3c88c1fde3885a3be3fbab9f35724e6ce99467f7d9c5026132184ca"
 "checksum rand 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3ae1b169243eaf61759b8475a998f0a385e42042370f3a7dbaf35246eacc8412"
