@@ -30,6 +30,7 @@ const LINES: &str = "total lines";
 const MILLION: usize = 1_000_000;
 const RED: &str = "#e05d44";
 const THOUSAND: usize = 1_000;
+const DAY_IN_SECONDS: usize = 24 * 60 * 60;
 
 lazy_static! {
     static ref ERROR_BADGE: String = {
@@ -178,6 +179,7 @@ fn badge<'a, 'b>(
     }
 
     redis.set(&*hash, serde_json::to_string(&stats)?)?;
+    redis.expires(&*hash, DAY_IN_SECONDS);
 
     respond!(
         Status::Ok,
