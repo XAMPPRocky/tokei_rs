@@ -179,7 +179,6 @@ fn badge<'a, 'b>(
     }
 
     redis.set(&*hash, serde_json::to_string(&stats)?)?;
-    redis.expires(&*hash, DAY_IN_SECONDS);
 
     respond!(
         Status::Ok,
