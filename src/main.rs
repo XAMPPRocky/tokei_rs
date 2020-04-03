@@ -22,6 +22,7 @@ type Result<T> = std::result::Result<T, failure::Error>;
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
 const BLUE: &str = "#007ec6";
+const GREY: &str = "#9e9e9e";
 const CODE: &str = "lines of code";
 const COMMENTS: &str = "comments";
 const FILES: &str = "files";
@@ -33,7 +34,7 @@ const THOUSAND: usize = 1_000;
 const DAY_IN_SECONDS: usize = 24 * 60 * 60;
 
 lazy_static! {
-    static ref ERROR_BADGE: String = {
+    static ref BAD_URL_BADGE: String = {
         let options = BadgeOptions {
             subject: String::from("Error"),
             status: String::from("Incorrect URL"),
@@ -134,13 +135,14 @@ fn badge<'a, 'b>(
     let stdout = ls_remote.stdout;
     let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
         Some(index) if index == HASH_LENGTH => index,
-        _ => return respond!(Status::BadRequest, &**ERROR_BADGE),
+        _ => return respond!(Status::BadRequest, &**BAD_URL_BADGE),
     };
     let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
 
     if let IfNoneMatch(Some(etag)) = if_none_match {
         let hash = EntityTag::new(false, hash.to_owned().into_owned());
         if hash.weak_eq(&etag) {
+            log::info!("Not Modified");
             return respond!(Status::NotModified);
         }
     }
@@ -151,6 +153,8 @@ fn badge<'a, 'b>(
         .get::<_, Option<String>>(&*hash)?
         .and_then(|s| serde_json::from_str::<Language>(&s).ok())
     {
+        log::info!("Found cached entry.");
+        log_total(&stats, &url);
         return respond!(
             Status::Ok,
             accept_header,
@@ -159,6 +163,7 @@ fn badge<'a, 'b>(
         );
     }
 
+    log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
 
@@ -168,7 +173,26 @@ fn badge<'a, 'b>(
 
     let mut stats = Language::new();
     let mut languages = Languages::new();
+    log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
+
+    // There seems to be a race condition where multiple requests to the same
+    // repo can fail and report `0` and then become cached, this solves it
+    // by checking if we actually found anything first before trying to cache.
+    if languages.is_empty() {
+        let options = BadgeOptions {
+            subject: String::from(category),
+            status: String::from("Processing..."),
+            color: String::from(GREY),
+        };
+
+        return respond!(
+            Status::Ok,
+            accept_header,
+            Badge::new(options).unwrap().to_svg(),
+            (&*hash).to_owned()
+        );
+    }
 
     for (_, language) in languages {
         stats += language;
@@ -178,6 +202,7 @@ fn badge<'a, 'b>(
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
     }
 
+    log_total(&stats, &url);
     redis.set(&*hash, serde_json::to_string(&stats)?)?;
 
     respond!(
@@ -186,6 +211,17 @@ fn badge<'a, 'b>(
         make_badge(accept_header, stats, &category)?,
         (&*hash).to_owned()
     )
+}
+
+fn log_total(stats: &Language, url: &str) {
+    log::info!(
+        "{} - Lines {} Code {} Comments {} Blanks {}",
+        url,
+        stats.lines,
+        stats.code,
+        stats.comments,
+        stats.blanks
+    );
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
