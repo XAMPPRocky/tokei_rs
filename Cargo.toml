@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-badge = "0.2"
+badge = "0.3"
 lazy_static = "1"
 mime = "0.3"
 r2d2 = "0.8"
