@@ -84,7 +84,7 @@ fn main() {
     let pool = r2d2::Pool::builder().build(manager).unwrap();
     rocket::ignite()
         .manage(pool)
-        .mount("/", routes![index, badge])
+        .mount("/", routes![index, stats_badge])
         .launch();
 }
 
@@ -112,7 +112,7 @@ impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
 }
 
 #[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn badge<'a, 'b>(
+fn stats_badge<'a, 'b>(
     accept_header: &Accept,
     if_none_match: IfNoneMatch,
     domain: String,
@@ -158,7 +158,7 @@ fn badge<'a, 'b>(
         return respond!(
             Status::Ok,
             accept_header,
-            make_badge(accept_header, stats, &category)?,
+            make_stats_badge(accept_header, stats, &category)?,
             (&*hash).to_owned()
         );
     }
@@ -208,7 +208,7 @@ fn badge<'a, 'b>(
     respond!(
         Status::Ok,
         accept_header,
-        make_badge(accept_header, stats, &category)?,
+        make_stats_badge(accept_header, stats, &category)?,
         (&*hash).to_owned()
     )
 }
@@ -228,7 +228,7 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge(accept: &Accept, stats: Language, category: &str) -> Result<String> {
+fn make_stats_badge(accept: &Accept, stats: Language, category: &str) -> Result<String> {
     if *accept == Accept::JSON {
         return Ok(serde_json::to_string(&stats)?);
     }
