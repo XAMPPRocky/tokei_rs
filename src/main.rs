@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate rocket;
 
-use std::{env, io::Cursor, process::Command};
+use std::{borrow::Cow, env, io::Cursor, process::Command, str::Utf8Error};
 
 use badge::{Badge, BadgeOptions};
 use lazy_static::lazy_static;
@@ -123,12 +123,7 @@ fn stats_badge<'a, 'b>(
 ) -> Result<Response<'b>> {
     let category = category.unwrap_or(String::from("lines"));
 
-    let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
-
-    // For backwards compatability if a domain isn't specified we append `.com`.
-    if !domain.contains(".") {
-        domain += ".com";
-    }
+    let domain = process_domain(&domain)?;
 
     let url = format!("https://{}/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
@@ -222,6 +217,8 @@ fn lang_badge<'a, 'b>(
     repo: String,
     pool: State<r2d2::Pool<RedisConnectionManager>>,
 ) -> Result<Response<'b>> {
+    let domain = process_domain(&domain)?;
+
     respond!(Status::Ok)
 }
 
@@ -270,4 +267,17 @@ fn make_stats_badge(accept: &Accept, stats: Language, category: &str) -> Result<
     };
 
     Ok(Badge::new(options).unwrap().to_svg())
+}
+
+fn process_domain<'a>(domain: &'a str) -> std::result::Result<Cow<'a, str>, Utf8Error> {
+    let domain = percent_encoding::percent_decode_str(domain).decode_utf8()?;
+
+    // For backwards compatability if a domain isn't specified we append `.com`.
+    let domain = if domain.contains('.') {
+        domain
+    } else {
+        domain + ".com"
+    };
+
+    Ok(domain)
 }
