@@ -84,7 +84,7 @@ fn main() {
     let pool = r2d2::Pool::builder().build(manager).unwrap();
     rocket::ignite()
         .manage(pool)
-        .mount("/", routes![index, stats_badge])
+        .mount("/", routes![index, stats_badge, lang_badge])
         .launch();
 }
 
@@ -211,6 +211,18 @@ fn stats_badge<'a, 'b>(
         make_stats_badge(accept_header, stats, &category)?,
         (&*hash).to_owned()
     )
+}
+
+#[get("/b2/<domain>/<user>/<repo>")]
+fn lang_badge<'a, 'b>(
+    accept_header: &Accept,
+    if_none_match: IfNoneMatch,
+    domain: String,
+    user: String,
+    repo: String,
+    pool: State<r2d2::Pool<RedisConnectionManager>>,
+) -> Result<Response<'b>> {
+    respond!(Status::Ok)
 }
 
 fn log_total(stats: &Language, url: &str) {
