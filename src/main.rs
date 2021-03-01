@@ -15,7 +15,7 @@ use rocket::{
     Response, State,
 };
 use tempfile::TempDir;
-use tokei::{Language, Languages};
+use tokei::{Language, LanguageType, Languages};
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -29,6 +29,7 @@ const FILES: &str = "files";
 const HASH_LENGTH: usize = 40;
 const LINES: &str = "total lines";
 const MILLION: usize = 1_000_000;
+const PRIMARY_LANG: &str = "primary language";
 const RED: &str = "#e05d44";
 const THOUSAND: usize = 1_000;
 const DAY_IN_SECONDS: usize = 24 * 60 * 60;
@@ -219,7 +220,79 @@ fn lang_badge<'a, 'b>(
 ) -> Result<Response<'b>> {
     let domain = process_domain(&domain)?;
 
-    respond!(Status::Ok)
+    let url = format!("https://{}/{}/{}", domain, user, repo);
+    let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
+    let stdout = ls_remote.stdout;
+    let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
+        Some(index) if index == HASH_LENGTH => index,
+        _ => return respond!(Status::BadRequest, &**BAD_URL_BADGE),
+    };
+    let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
+
+    if let IfNoneMatch(Some(etag)) = if_none_match {
+        let hash = EntityTag::new(false, hash.to_owned().into_owned());
+        if hash.weak_eq(&etag) {
+            log::info!("Not Modified");
+            return respond!(Status::NotModified);
+        }
+    }
+
+    let mut redis = pool.get()?;
+
+    if let Some(language) = redis
+        .get::<_, Option<String>>(&format!("primary-{}", hash))?
+        .and_then(|s| serde_json::from_str::<LanguageType>(&s).ok())
+    {
+        log::info!("Found cached entry.");
+        log_primary(&language, &url);
+        return respond!(
+            Status::Ok,
+            accept_header,
+            make_primary_lang_badge(accept_header, &language)?,
+            (&*hash).to_owned()
+        );
+    }
+
+    log::info!("{} - Cloning", url);
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path().to_str().unwrap();
+
+    Command::new("git")
+        .args(&["clone", &url, &temp_path, "--depth", "1"])
+        .output()?;
+
+    let mut languages = Languages::new();
+    log::info!("{} - Getting Primary Language", url);
+    languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
+    // NOTE Handle race condition
+    if languages.is_empty() {
+        let options = BadgeOptions {
+            subject: String::from(PRIMARY_LANG),
+            status: String::from("Processing..."),
+            color: String::from(GREY),
+        };
+
+        return respond!(
+            Status::Ok,
+            accept_header,
+            Badge::new(options).unwrap().to_svg(),
+            (&*hash).to_owned()
+        );
+    }
+    let (primary_language_type, _) = languages
+        .iter()
+        .max_by_key(|(_, lang)| lang.code)
+        .expect("No primary language");
+
+    log_primary(&primary_language_type, &url);
+    redis.set(&format!("primary-{}", hash), serde_json::to_string(&primary_language_type)?)?;
+
+    respond!(
+        Status::Ok,
+        accept_header,
+        make_primary_lang_badge(accept_header, primary_language_type)?,
+        (&*hash).to_owned()
+    )
 }
 
 fn log_total(stats: &Language, url: &str) {
@@ -231,6 +304,10 @@ fn log_total(stats: &Language, url: &str) {
         stats.comments,
         stats.blanks
     );
+}
+
+fn log_primary(language: &LanguageType, url: &str) {
+    log::info!("{} - Language {}", url, language);
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
@@ -263,6 +340,20 @@ fn make_stats_badge(accept: &Accept, stats: Language, category: &str) -> Result<
     let options = BadgeOptions {
         subject: String::from(label),
         status: amount,
+        color: String::from(BLUE),
+    };
+
+    Ok(Badge::new(options).unwrap().to_svg())
+}
+
+fn make_primary_lang_badge(accept: &Accept, lang: &LanguageType) -> Result<String> {
+    if *accept == Accept::JSON {
+        return Ok(serde_json::to_string(&lang)?);
+    }
+
+    let options = BadgeOptions {
+        subject: String::from(PRIMARY_LANG),
+        status: lang.to_string(),
         color: String::from(BLUE),
     };
 
