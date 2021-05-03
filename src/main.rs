@@ -111,7 +111,7 @@ impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
     }
 }
 
-#[get("/b1/<domain>/<user>/<repo>?<category>")]
+#[get("/b1/<domain>/<user>/<repo...>?<category>")]
 fn badge<'a, 'b>(
     accept_header: &Accept,
     if_none_match: IfNoneMatch,
