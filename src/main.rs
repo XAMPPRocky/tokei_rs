@@ -3,21 +3,19 @@
 #[macro_use]
 extern crate rocket;
 
-use std::{env, io::Cursor, process::Command};
+use std::{io::Cursor, process::Command};
 
 use badge::{Badge, BadgeOptions};
-use lazy_static::lazy_static;
-use r2d2_redis::RedisConnectionManager;
-use redis::Commands;
+use once_cell::sync::Lazy;
 use rocket::{
     http::{hyper::header::EntityTag, Accept, ContentType, Status},
     response::Redirect,
-    Response, State,
+    Response,
 };
 use tempfile::TempDir;
 use tokei::{Language, Languages};
 
-type Result<T> = std::result::Result<T, failure::Error>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
@@ -33,17 +31,62 @@ const RED: &str = "#e05d44";
 const THOUSAND: usize = 1_000;
 const DAY_IN_SECONDS: usize = 24 * 60 * 60;
 
-lazy_static! {
-    static ref BAD_URL_BADGE: String = {
-        let options = BadgeOptions {
-            subject: String::from("Error"),
-            status: String::from("Incorrect URL"),
-            color: String::from(RED),
-        };
-
-        Badge::new(options).unwrap().to_svg()
+static BAD_URL_BADGE: Lazy<String> = Lazy::new(|| {
+    let options = BadgeOptions {
+        subject: String::from("Error"),
+        status: String::from("Incorrect URL"),
+        color: String::from(RED),
     };
-    static ref REDIS_URL: String = env::var("REDIS_URL").unwrap();
+
+    Badge::new(options).unwrap().to_svg()
+});
+
+static INVALID_SHA_BADGE: Lazy<String> = Lazy::new(|| {
+    let options = BadgeOptions {
+        subject: String::from("Error"),
+        status: String::from("Invalid commit SHA"),
+        color: String::from(RED),
+    };
+
+    Badge::new(options).unwrap().to_svg()
+});
+
+static PROCESSING_BADGE: Lazy<String> = Lazy::new(|| {
+    let options = BadgeOptions {
+        subject: String::from("Error"),
+        status: String::from("Procsssing…"),
+        color: String::from(RED),
+    };
+
+    Badge::new(options).unwrap().to_svg()
+});
+
+fn main() {
+    dotenv::dotenv().unwrap();
+    rocket::ignite().mount("/", routes![index, badge]).launch();
+}
+
+#[get("/")]
+fn index() -> Redirect {
+    Redirect::permanent("https://github.com/XAMPPRocky/tokei")
+}
+
+struct IfNoneMatch(Option<EntityTag>);
+
+impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
+    type Error = ();
+
+    fn from_request(
+        request: &'a rocket::Request<'r>,
+    ) -> rocket::request::Outcome<Self, Self::Error> {
+        rocket::Outcome::Success(Self(
+            request
+                .headers()
+                .get("If-None-Match")
+                .next()
+                .and_then(|s| s.parse().ok()),
+        ))
+    }
 }
 
 macro_rules! respond {
@@ -78,49 +121,16 @@ macro_rules! respond {
     }};
 }
 
-fn main() {
-    dotenv::dotenv().unwrap();
-    let manager = RedisConnectionManager::new(&**REDIS_URL).unwrap();
-    let pool = r2d2::Pool::builder().build(manager).unwrap();
-    rocket::ignite()
-        .manage(pool)
-        .mount("/", routes![index, badge])
-        .launch();
-}
-
-#[get("/")]
-fn index() -> Redirect {
-    Redirect::permanent("https://github.com/XAMPPRocky/tokei")
-}
-
-struct IfNoneMatch(Option<EntityTag>);
-
-impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
-    type Error = ();
-
-    fn from_request(
-        request: &'a rocket::Request<'r>,
-    ) -> rocket::request::Outcome<Self, Self::Error> {
-        rocket::Outcome::Success(Self(
-            request
-                .headers()
-                .get("If-None-Match")
-                .next()
-                .and_then(|s| s.parse().ok()),
-        ))
-    }
-}
 
 #[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn badge<'a, 'b>(
+fn badge<'response>(
     accept_header: &Accept,
     if_none_match: IfNoneMatch,
     domain: String,
     user: String,
     repo: String,
     category: Option<String>,
-    pool: State<r2d2::Pool<RedisConnectionManager>>,
-) -> Result<Response<'b>> {
+) -> Result<Response<'response>> {
     let category = category.unwrap_or(String::from("lines"));
 
     let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
@@ -137,32 +147,55 @@ fn badge<'a, 'b>(
         Some(index) if index == HASH_LENGTH => index,
         _ => return respond!(Status::BadRequest, &**BAD_URL_BADGE),
     };
-    let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
+    let sha = match String::from_utf8(stdout[..end_of_sha].to_owned()) {
+        Ok(s) => s,
+        Err(_) => return respond!(Status::BadRequest, &**INVALID_SHA_BADGE),
+    };
 
-    if let IfNoneMatch(Some(etag)) = if_none_match {
-        let hash = EntityTag::new(false, hash.to_owned().into_owned());
-        if hash.weak_eq(&etag) {
-            log::info!("Not Modified");
-            return respond!(Status::NotModified);
+    let entry = get_statistics(&url, &sha)?;
+
+    if entry.was_cached {
+        log::info!("{}#{} Cache hit", url, sha);
+
+        if let IfNoneMatch(Some(etag)) = if_none_match {
+            let sha_tag = EntityTag::new(false, sha.clone());
+            if sha_tag.weak_eq(&etag) {
+                log::info!("{}#{} Not Modified", url, sha);
+                return respond!(Status::NotModified);
+            }
         }
     }
 
-    let mut redis = pool.get()?;
+    let stats = entry.value;
 
-    if let Some(stats) = redis
-        .get::<_, Option<String>>(&*hash)?
-        .and_then(|s| serde_json::from_str::<Language>(&s).ok())
-    {
-        log::info!("Found cached entry.");
-        log_total(&stats, &url);
-        return respond!(
-            Status::Ok,
-            accept_header,
-            make_badge(accept_header, stats, &category)?,
-            (&*hash).to_owned()
-        );
-    }
+    log::info!(
+        "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        url=url,
+        sha=sha,
+        lines=stats.lines,
+        code=stats.code,
+        comments=stats.comments,
+        blanks=stats.blanks
+    );
 
+    let badge = make_badge(accept_header, &stats, &category)?;
+
+    respond!(
+        Status::Ok,
+        accept_header,
+        badge,
+        sha
+    )
+}
+
+#[cached::proc_macro::cached(
+    result = true,
+    with_cached_flag = true,
+    type = "cached::TimedSizedCache<String, cached::Return<Language>>",
+    create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, 86400) }",
+    convert = r#"{ format!("{}{}", url, _sha) }"#,
+)]
+fn get_statistics(url: &str, _sha: &str) -> Result<cached::Return<Language>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -176,24 +209,6 @@ fn badge<'a, 'b>(
     log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
-    // There seems to be a race condition where multiple requests to the same
-    // repo can fail and report `0` and then become cached, this solves it
-    // by checking if we actually found anything first before trying to cache.
-    if languages.is_empty() {
-        let options = BadgeOptions {
-            subject: String::from(category),
-            status: String::from("Processing..."),
-            color: String::from(GREY),
-        };
-
-        return respond!(
-            Status::Ok,
-            accept_header,
-            Badge::new(options).unwrap().to_svg(),
-            (&*hash).to_owned()
-        );
-    }
-
     for (_, language) in languages {
         stats += language;
     }
@@ -202,33 +217,14 @@ fn badge<'a, 'b>(
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
     }
 
-    log_total(&stats, &url);
-    redis.set(&*hash, serde_json::to_string(&stats)?)?;
-
-    respond!(
-        Status::Ok,
-        accept_header,
-        make_badge(accept_header, stats, &category)?,
-        (&*hash).to_owned()
-    )
-}
-
-fn log_total(stats: &Language, url: &str) {
-    log::info!(
-        "{} - Lines {} Code {} Comments {} Blanks {}",
-        url,
-        stats.lines,
-        stats.code,
-        stats.comments,
-        stats.blanks
-    );
+    Ok(cached::Return::new(stats))
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge(accept: &Accept, stats: Language, category: &str) -> Result<String> {
+fn make_badge(accept: &Accept, stats: &Language, category: &str) -> Result<String> {
     if *accept == Accept::JSON {
         return Ok(serde_json::to_string(&stats)?);
     }
