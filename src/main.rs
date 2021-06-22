@@ -1,164 +1,170 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+use std::process::Command;
 
-#[macro_use]
-extern crate rocket;
-
-use std::{borrow::Cow, env, io::Cursor, process::Command, str::Utf8Error};
-
-use badge::{Badge, BadgeOptions};
-use lazy_static::lazy_static;
-use r2d2_redis::RedisConnectionManager;
-use redis::Commands;
-use rocket::{
-    http::{hyper::header::EntityTag, Accept, ContentType, Status},
-    response::Redirect,
-    Response, State,
+use actix_http::http::header::{
+    Accept, CacheControl, CacheDirective, ContentType, EntityTag, Header, IfNoneMatch,
+    CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION,
 };
+use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer};
+use badge::{Badge, BadgeOptions};
+use cached::Cached;
+use once_cell::sync::Lazy;
 use tempfile::TempDir;
 use tokei::{Language, LanguageType, Languages};
-
-type Result<T> = std::result::Result<T, failure::Error>;
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
 const BLUE: &str = "#007ec6";
-const GREY: &str = "#9e9e9e";
 const CODE: &str = "lines of code";
 const COMMENTS: &str = "comments";
 const FILES: &str = "files";
+const PRIMARY_LANG: &str = "primary language";
 const HASH_LENGTH: usize = 40;
 const LINES: &str = "total lines";
 const MILLION: usize = 1_000_000;
-const PRIMARY_LANG: &str = "primary language";
-const RED: &str = "#e05d44";
 const THOUSAND: usize = 1_000;
-const DAY_IN_SECONDS: usize = 24 * 60 * 60;
+const DAY_IN_SECONDS: u64 = 24 * 60 * 60;
 
-lazy_static! {
-    static ref BAD_URL_BADGE: String = {
-        let options = BadgeOptions {
-            subject: String::from("Error"),
-            status: String::from("Incorrect URL"),
-            color: String::from(RED),
-        };
+static CONTENT_TYPE_SVG: Lazy<ContentType> =
+    Lazy::new(|| ContentType("image/svg".parse().unwrap()));
 
-        Badge::new(options).unwrap().to_svg()
-    };
-    static ref REDIS_URL: String = env::var("REDIS_URL").unwrap();
-}
-
-macro_rules! respond {
-    ($status:expr) => {{
-        let mut response = Response::new();
-        response.set_status($status);
-        Ok(response)
-    }};
-
-    ($status:expr, $body:expr) => {{
-        let mut response = Response::new();
-        response.set_status($status);
-        response.set_sized_body(Cursor::new($body));
-        response.set_header(ContentType::SVG);
-        Ok(response)
-    }};
-
-    ($status:expr, $accept:expr, $body:expr, $etag:expr) => {{
-        use rocket::http::hyper::header::{CacheControl, CacheDirective, ETag};
-
-        let mut response = Response::new();
-        response.set_status($status);
-        response.set_sized_body(Cursor::new($body));
-        response.set_header(if *$accept == Accept::JSON {
-            ContentType::JSON
-        } else {
-            ContentType::SVG
-        });
-        response.set_header(CacheControl(vec![CacheDirective::NoCache]));
-        response.set_header(ETag(EntityTag::new(false, $etag)));
-        Ok(response)
-    }};
-}
-
-fn main() {
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::init();
     dotenv::dotenv().unwrap();
-    let manager = RedisConnectionManager::new(&**REDIS_URL).unwrap();
-    let pool = r2d2::Pool::builder().build(manager).unwrap();
-    rocket::ignite()
-        .manage(pool)
-        .mount("/", routes![index, stats_badge, lang_badge])
-        .launch();
+
+    HttpServer::new(|| {
+        App::new()
+            .wrap(actix_web::middleware::Logger::default())
+            .service(redirect_index)
+            .service(create_stats_badge)
+            .service(create_primary_lang_badge)
+    })
+    .bind("0.0.0.0:8000")?
+    .run()
+    .await
 }
 
 #[get("/")]
-fn index() -> Redirect {
-    Redirect::permanent("https://github.com/XAMPPRocky/tokei")
+fn redirect_index() -> HttpResponse {
+    HttpResponse::PermanentRedirect()
+        .header(LOCATION, "https://github.com/XAMPPRocky/tokei")
+        .finish()
 }
 
-struct IfNoneMatch(Option<EntityTag>);
+macro_rules! respond {
+    ($status:ident) => {{
+        HttpResponse::$status().finish()
+    }};
 
-impl<'a, 'r> rocket::request::FromRequest<'a, 'r> for IfNoneMatch {
-    type Error = ();
+    ($status:ident, $body:expr) => {{
+        HttpResponse::$status()
+            .set(CONTENT_TYPE_SVG.clone())
+            .body($body)
+    }};
 
-    fn from_request(
-        request: &'a rocket::Request<'r>,
-    ) -> rocket::request::Outcome<Self, Self::Error> {
-        rocket::Outcome::Success(Self(
-            request
-                .headers()
-                .get("If-None-Match")
-                .next()
-                .and_then(|s| s.parse().ok()),
-        ))
-    }
+    ($status:ident, $accept:expr, $body:expr, $etag:expr) => {{
+        HttpResponse::$status()
+            .header(CACHE_CONTROL, CacheControl(vec![CacheDirective::NoCache]))
+            .header(ETAG, EntityTag::new(false, $etag))
+            .header(
+                CONTENT_TYPE,
+                if $accept == ContentType::json() {
+                    ContentType::json()
+                } else {
+                    CONTENT_TYPE_SVG.clone()
+                },
+            )
+            .body($body)
+    }};
 }
 
-#[get("/b1/<domain>/<user>/<repo>?<category>")]
-fn stats_badge<'a, 'b>(
-    accept_header: &Accept,
-    if_none_match: IfNoneMatch,
-    domain: String,
-    user: String,
-    repo: String,
+#[derive(serde::Deserialize)]
+struct BadgeQuery {
     category: Option<String>,
-    pool: State<r2d2::Pool<RedisConnectionManager>>,
-) -> Result<Response<'b>> {
-    let category = category.unwrap_or(String::from("lines"));
+}
 
-    let domain = process_domain(&domain)?;
+#[get("/b1/{domain}/{user}/{repo}")]
+async fn create_stats_badge(
+    request: HttpRequest,
+    web::Path((domain, user, repo)): web::Path<(String, String, String)>,
+    web::Query(query): web::Query<BadgeQuery>,
+) -> actix_web::Result<HttpResponse> {
+    let category = query.category.unwrap_or(String::from("lines"));
+
+    let content_type = if let Ok(accept) = Accept::parse(&request) {
+        if accept == Accept::json() {
+            ContentType::json()
+        } else {
+            CONTENT_TYPE_SVG.clone()
+        }
+    } else {
+        CONTENT_TYPE_SVG.clone()
+    };
 
     let url = format!("https://{}/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
-    let stdout = ls_remote.stdout;
-    let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
-        Some(index) if index == HASH_LENGTH => index,
-        _ => return respond!(Status::BadRequest, &**BAD_URL_BADGE),
-    };
-    let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
+    let sha: String = ls_remote
+        .stdout
+        .iter()
+        .position(|&b| b == b'\t')
+        .filter(|i| *i == HASH_LENGTH)
+        .map(|i| (&ls_remote.stdout[..i]).to_owned())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    if let IfNoneMatch(Some(etag)) = if_none_match {
-        let hash = EntityTag::new(false, hash.to_owned().into_owned());
-        if hash.weak_eq(&etag) {
-            log::info!("Not Modified");
-            return respond!(Status::NotModified);
+    if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
+        let sha_tag = EntityTag::new(false, sha.clone());
+        let found_match = match if_none_match {
+            IfNoneMatch::Any => false,
+            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&sha_tag)),
+        };
+
+        if found_match {
+            STATS_CACHE
+                .lock()
+                .unwrap()
+                .cache_get(&repo_identifier(&url, &sha));
+            log::info!("{}#{} Not Modified", url, sha);
+            return Ok(respond!(NotModified));
         }
     }
 
-    let mut redis = pool.get()?;
+    let entry = get_statistics(&url, &sha).map_err(|err| actix_web::error::ErrorBadRequest(err))?;
 
-    if let Some(stats) = redis
-        .get::<_, Option<String>>(&*hash)?
-        .and_then(|s| serde_json::from_str::<Language>(&s).ok())
-    {
-        log::info!("Found cached entry.");
-        log_total(&stats, &url);
-        return respond!(
-            Status::Ok,
-            accept_header,
-            make_stats_badge(accept_header, stats, &category)?,
-            (&*hash).to_owned()
-        );
+    if entry.was_cached {
+        log::info!("{}#{} Cache hit", url, sha);
     }
 
+    let stats = entry.value;
+
+    log::info!(
+        "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        url = url,
+        sha = sha,
+        lines = stats.lines,
+        code = stats.code,
+        comments = stats.comments,
+        blanks = stats.blanks
+    );
+
+    let badge = make_stats_badge(&content_type, &stats, &category)?;
+
+    Ok(respond!(Ok, content_type, badge, sha))
+}
+
+fn repo_identifier(url: &str, sha: &str) -> String {
+    format!("{}#{}", url, sha)
+}
+
+#[cached::proc_macro::cached(
+    name = "STATS_CACHE",
+    result = true,
+    with_cached_flag = true,
+    type = "cached::TimedSizedCache<String, cached::Return<Language>>",
+    create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
+    convert = r#"{ repo_identifier(url, _sha) }"#
+)]
+fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -172,24 +178,6 @@ fn stats_badge<'a, 'b>(
     log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
-    // There seems to be a race condition where multiple requests to the same
-    // repo can fail and report `0` and then become cached, this solves it
-    // by checking if we actually found anything first before trying to cache.
-    if languages.is_empty() {
-        let options = BadgeOptions {
-            subject: String::from(category),
-            status: String::from("Processing..."),
-            color: String::from(GREY),
-        };
-
-        return respond!(
-            Status::Ok,
-            accept_header,
-            Badge::new(options).unwrap().to_svg(),
-            (&*hash).to_owned()
-        );
-    }
-
     for (_, language) in languages {
         stats += language;
     }
@@ -197,62 +185,18 @@ fn stats_badge<'a, 'b>(
     for stat in &mut stats.stats {
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
     }
-
-    log_total(&stats, &url);
-    redis.set(&*hash, serde_json::to_string(&stats)?)?;
-
-    respond!(
-        Status::Ok,
-        accept_header,
-        make_stats_badge(accept_header, stats, &category)?,
-        (&*hash).to_owned()
-    )
+    Ok(cached::Return::new(stats))
 }
 
-#[get("/b2/<domain>/<user>/<repo>")]
-fn lang_badge<'a, 'b>(
-    accept_header: &Accept,
-    if_none_match: IfNoneMatch,
-    domain: String,
-    user: String,
-    repo: String,
-    pool: State<r2d2::Pool<RedisConnectionManager>>,
-) -> Result<Response<'b>> {
-    let domain = process_domain(&domain)?;
-
-    let url = format!("https://{}/{}/{}", domain, user, repo);
-    let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
-    let stdout = ls_remote.stdout;
-    let end_of_sha = match stdout.iter().position(|&b| b == b'\t') {
-        Some(index) if index == HASH_LENGTH => index,
-        _ => return respond!(Status::BadRequest, &**BAD_URL_BADGE),
-    };
-    let hash = String::from_utf8_lossy(&stdout[..end_of_sha]);
-
-    if let IfNoneMatch(Some(etag)) = if_none_match {
-        let hash = EntityTag::new(false, hash.to_owned().into_owned());
-        if hash.weak_eq(&etag) {
-            log::info!("Not Modified");
-            return respond!(Status::NotModified);
-        }
-    }
-
-    let mut redis = pool.get()?;
-
-    if let Some(language) = redis
-        .get::<_, Option<String>>(&format!("primary-{}", hash))?
-        .and_then(|s| serde_json::from_str::<LanguageType>(&s).ok())
-    {
-        log::info!("Found cached entry.");
-        log_primary(&language, &url);
-        return respond!(
-            Status::Ok,
-            accept_header,
-            make_primary_lang_badge(accept_header, &language)?,
-            (&*hash).to_owned()
-        );
-    }
-
+#[cached::proc_macro::cached(
+    name = "PRIMARY_LANG_CACHE",
+    result = true,
+    with_cached_flag = true,
+    type = "cached::TimedSizedCache<String, cached::Return<LanguageType>>",
+    create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
+    convert = r#"{ repo_identifier(url, _sha) }"#
+)]
+fn get_primary_lang(url: &str, _sha: &str) -> eyre::Result<cached::Return<LanguageType>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -262,60 +206,86 @@ fn lang_badge<'a, 'b>(
         .output()?;
 
     let mut languages = Languages::new();
-    log::info!("{} - Getting Primary Language", url);
+    log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
-    // NOTE Handle race condition
-    if languages.is_empty() {
-        let options = BadgeOptions {
-            subject: String::from(PRIMARY_LANG),
-            status: String::from("Processing..."),
-            color: String::from(GREY),
-        };
 
-        return respond!(
-            Status::Ok,
-            accept_header,
-            Badge::new(options).unwrap().to_svg(),
-            (&*hash).to_owned()
-        );
-    }
     let (primary_language_type, _) = languages
         .iter()
         .max_by_key(|(_, lang)| lang.code)
         .expect("No primary language");
 
-    log_primary(&primary_language_type, &url);
-    redis.set(&format!("primary-{}", hash), serde_json::to_string(&primary_language_type)?)?;
-
-    respond!(
-        Status::Ok,
-        accept_header,
-        make_primary_lang_badge(accept_header, primary_language_type)?,
-        (&*hash).to_owned()
-    )
-}
-
-fn log_total(stats: &Language, url: &str) {
-    log::info!(
-        "{} - Lines {} Code {} Comments {} Blanks {}",
-        url,
-        stats.lines,
-        stats.code,
-        stats.comments,
-        stats.blanks
-    );
-}
-
-fn log_primary(language: &LanguageType, url: &str) {
-    log::info!("{} - Language {}", url, language);
+    Ok(cached::Return::new(*primary_language_type))
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_stats_badge(accept: &Accept, stats: Language, category: &str) -> Result<String> {
-    if *accept == Accept::JSON {
+#[get("/b2/{domain}/{user}/{repo}")]
+async fn create_primary_lang_badge(
+    request: HttpRequest,
+    web::Path((domain, user, repo)): web::Path<(String, String, String)>,
+) -> actix_web::Result<HttpResponse> {
+    let content_type = match Accept::parse(&request) {
+        Ok(accept) if accept == Accept::json() => ContentType::json(),
+        _ => CONTENT_TYPE_SVG.clone()
+    };
+
+    let url = format!("https://{}/{}/{}", domain, user, repo);
+    let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
+    let sha: String = ls_remote
+        .stdout
+        .iter()
+        .position(|&b| b == b'\t')
+        .filter(|i| *i == HASH_LENGTH)
+        .map(|i| (&ls_remote.stdout[..i]).to_owned())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
+
+    if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
+        let sha_tag = EntityTag::new(false, sha.clone());
+        let found_match = match if_none_match {
+            IfNoneMatch::Any => false,
+            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&sha_tag)),
+        };
+
+        if found_match {
+            PRIMARY_LANG_CACHE
+                .lock()
+                .unwrap()
+                .cache_get(&repo_identifier(&url, &sha));
+            log::info!("{}#{} Not Modified", url, sha);
+            return Ok(respond!(NotModified));
+        }
+    }
+
+    let entry = get_primary_lang(&url, &sha).map_err(|err| actix_web::error::ErrorBadRequest(err))?;
+
+    if entry.was_cached {
+        log::info!("{}#{} Cache hit", url, sha);
+    }
+
+    let primary_language_type = entry.value;
+
+    log::info!(
+        "{url}#{sha} - Primary Language {lang}",
+        url = url,
+        sha = sha,
+        lang = primary_language_type,
+    );
+
+    let badge = make_primary_lang_badge(&content_type, &primary_language_type)?;
+
+    Ok(respond!(Ok, content_type, badge, sha))
+
+}
+
+fn make_stats_badge(
+    content_type: &ContentType,
+    stats: &Language,
+    category: &str,
+) -> actix_web::Result<String> {
+    if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
@@ -346,8 +316,8 @@ fn make_stats_badge(accept: &Accept, stats: Language, category: &str) -> Result<
     Ok(Badge::new(options).unwrap().to_svg())
 }
 
-fn make_primary_lang_badge(accept: &Accept, lang: &LanguageType) -> Result<String> {
-    if *accept == Accept::JSON {
+fn make_primary_lang_badge(content_type: &ContentType, lang: &LanguageType) -> actix_web::Result<String> {
+    if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&lang)?);
     }
 
@@ -359,16 +329,16 @@ fn make_primary_lang_badge(accept: &Accept, lang: &LanguageType) -> Result<Strin
 
     Ok(Badge::new(options).unwrap().to_svg())
 }
-
-fn process_domain<'a>(domain: &'a str) -> std::result::Result<Cow<'a, str>, Utf8Error> {
-    let domain = percent_encoding::percent_decode_str(domain).decode_utf8()?;
-
-    // For backwards compatability if a domain isn't specified we append `.com`.
-    let domain = if domain.contains('.') {
-        domain
-    } else {
-        domain + ".com"
-    };
-
-    Ok(domain)
-}
+// 
+// fn process_domain<'a>(domain: &'a str) -> std::result::Result<Cow<'a, str>, Utf8Error> {
+//     let domain = percent_encoding::percent_decode_str(domain).decode_utf8()?;
+// 
+//     // For backwards compatability if a domain isn't specified we append `.com`.
+//     let domain = if domain.contains('.') {
+//         domain
+//     } else {
+//         domain + ".com"
+//     };
+// 
+//     Ok(domain)
+// }
