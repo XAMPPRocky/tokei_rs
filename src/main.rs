@@ -101,6 +101,13 @@ async fn create_stats_badge(
         CONTENT_TYPE_SVG.clone()
     };
 
+    let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
+
+    // For backwards compatability if a domain isn't specified we append `.com`.
+    if !domain.contains(".") {
+        domain += ".com";
+    }
+
     let url = format!("https://{}/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let sha: String = ls_remote
@@ -231,6 +238,13 @@ async fn create_primary_lang_badge(
         _ => CONTENT_TYPE_SVG.clone()
     };
 
+    let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
+
+    // For backwards compatability if a domain isn't specified we append `.com`.
+    if !domain.contains(".") {
+        domain += ".com";
+    }
+
     let url = format!("https://{}/{}/{}", domain, user, repo);
     let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
     let sha: String = ls_remote
@@ -329,16 +343,3 @@ fn make_primary_lang_badge(content_type: &ContentType, lang: &LanguageType) -> a
 
     Ok(Badge::new(options).unwrap().to_svg())
 }
-// 
-// fn process_domain<'a>(domain: &'a str) -> std::result::Result<Cow<'a, str>, Utf8Error> {
-//     let domain = percent_encoding::percent_decode_str(domain).decode_utf8()?;
-// 
-//     // For backwards compatability if a domain isn't specified we append `.com`.
-//     let domain = if domain.contains('.') {
-//         domain
-//     } else {
-//         domain + ".com"
-//     };
-// 
-//     Ok(domain)
-// }
