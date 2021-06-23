@@ -24,7 +24,7 @@ const THOUSAND: usize = 1_000;
 const DAY_IN_SECONDS: u64 = 24 * 60 * 60;
 
 static CONTENT_TYPE_SVG: Lazy<ContentType> =
-    Lazy::new(|| ContentType("image/svg".parse().unwrap()));
+    Lazy::new(|| ContentType("image/svg+xml".parse().unwrap()));
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
