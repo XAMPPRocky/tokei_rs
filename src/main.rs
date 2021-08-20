@@ -44,7 +44,7 @@ async fn main() -> std::io::Result<()> {
 
 #[get("/")]
 fn redirect_index() -> HttpResponse {
-    HttpResponse::PermanentRedirect()
+    HttpResponse::Found()
         .header(LOCATION, "https://github.com/XAMPPRocky/tokei")
         .finish()
 }
