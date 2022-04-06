@@ -38,4 +38,4 @@ docker:
     FROM debian:buster-slim
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei.rs
+    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs
