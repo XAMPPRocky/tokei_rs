@@ -35,9 +35,8 @@ build:
     SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/build
 
 docker:
-    FROM debian:buster-slim
+    FROM ubuntu:focal
     EXPOSE 8000
-    RUN apt-get install libc-bin libc
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
     SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs
