@@ -40,3 +40,13 @@ docker:
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
     SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs
+
+compose:
+    FROM earthly/dind:alpine
+    WORKDIR /test
+    COPY compose.yml ./
+    WITH DOCKER \
+            --compose compose.yml \
+            --load ghcr.io/xampprocky/tokei_rs:latest=(+docker)
+        RUN docker compose down && docker compose up --remove-orphans
+    END

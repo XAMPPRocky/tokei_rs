@@ -122,6 +122,7 @@ async fn create_badge(
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
+        log::debug!("Checking If-None-Match: {}", sha);
         let sha_tag = EntityTag::new(false, sha.clone());
         let found_match = match if_none_match {
             IfNoneMatch::Any => false,

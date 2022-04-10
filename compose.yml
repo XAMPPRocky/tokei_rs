@@ -1,0 +1,27 @@
+version: "3.7"
+
+networks:
+  web:
+    external: true
+  internal:
+    external: false
+    driver: bridge
+
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - web
+      - internal
+
+  badge:
+    image: ghcr.io/xampprocky/tokei_rs
+    environment:
+      - RUST_LOG=debug
+    networks:
+      - internal
