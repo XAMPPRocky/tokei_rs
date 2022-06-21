@@ -82,6 +82,7 @@ macro_rules! respond {
 #[derive(serde::Deserialize)]
 struct BadgeQuery {
     category: Option<String>,
+    message: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -92,6 +93,7 @@ async fn create_badge(
 ) -> actix_web::Result<HttpResponse> {
     let (domain, user, repo) = path.into_inner();
     let category = query.category.unwrap_or_else(|| String::from("lines"));
+    let message = query.message.unwrap_or_else(|| String::from(""));
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -157,7 +159,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category)?;
+    let badge = make_badge(&content_type, &stats, &category, &message)?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
@@ -207,17 +209,18 @@ fn make_badge(
     content_type: &ContentType,
     stats: &Language,
     category: &str,
+    message: &str,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
     let (amount, label) = match &*category {
-        "code" => (stats.code, CODE),
-        "files" => (stats.stats.len(), FILES),
-        "blanks" => (stats.blanks, BLANKS),
-        "comments" => (stats.comments, COMMENTS),
-        _ => (stats.lines, LINES),
+        "code" => (stats.code, if message == "" {CODE} else {&message}),
+        "files" => (stats.stats.len(), if message == "" {FILES} else {&message}),
+        "blanks" => (stats.blanks, if message == "" {BLANKS} else {&message}),
+        "comments" => (stats.comments, if message == "" {COMMENTS} else {&message}),
+        _ => (stats.lines, if message == "" {LINES} else {&message}),
     };
 
     let amount = if amount >= BILLION {
