@@ -1,15 +1,15 @@
 # tokei.rs badge service
 
 tokei.rs has support for badges. For example
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei_rs)](https://github.com/XAMPPRocky/tokei_rs).
+[![total lines](https://tokei.rs/b1/github/XAMPPRocky/tokei_rs)](https://github.com/XAMPPRocky/tokei_rs).
 
-```
+```sh
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei_rs)](https://github.com/XAMPPRocky/tokei_rs).
 ```
 
 Tokei's URL scheme is as follows.
 
-```
+```sh
 https://tokei.rs/b1/<domain>[<.com>]?/<namespace>/<repository>
 ```
 
@@ -22,9 +22,8 @@ By default the badge will show the repo's total lines, you can also
 specify for it to show a different category, by using the `?category=` query
 string. It can be either `code`, `blanks`, `files`, `lines`, or `comments`.
 Here is an example showing total number of code.
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code)](https://github.com/XAMPPRocky/tokei).
+[![lines of code](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code)](https://github.com/XAMPPRocky/tokei).
 
-```
+```sh
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=lines)](https://github.com/XAMPPRocky/tokei).
 ```
-
