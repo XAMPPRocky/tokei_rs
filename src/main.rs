@@ -1,10 +1,13 @@
 use std::process::Command;
 
-use actix_http::http::header::{
-    Accept, CacheControl, CacheDirective, ContentType, EntityTag, Header, IfNoneMatch,
-    CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION,
+use actix_web::{
+    get,
+    http::header::{
+        Accept, CacheControl, CacheDirective, ContentType, EntityTag, Header, IfNoneMatch,
+        CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION,
+    },
+    web, App, HttpRequest, HttpResponse, HttpServer,
 };
-use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer};
 use badge::{Badge, BadgeOptions};
 use cached::Cached;
 use once_cell::sync::Lazy;
@@ -28,8 +31,8 @@ static CONTENT_TYPE_SVG: Lazy<ContentType> =
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv::dotenv().ok();
     env_logger::init();
-    dotenv::dotenv().unwrap();
 
     HttpServer::new(|| {
         App::new()
@@ -37,15 +40,15 @@ async fn main() -> std::io::Result<()> {
             .service(redirect_index)
             .service(create_badge)
     })
-    .bind("0.0.0.0:8000")?
+    .bind(("0.0.0.0", 8000))?
     .run()
     .await
 }
 
 #[get("/")]
-fn redirect_index() -> HttpResponse {
+async fn redirect_index() -> HttpResponse {
     HttpResponse::Found()
-        .header(LOCATION, "https://github.com/XAMPPRocky/tokei")
+        .insert_header((LOCATION, "https://github.com/XAMPPRocky/tokei"))
         .finish()
 }
 
@@ -62,16 +65,16 @@ macro_rules! respond {
 
     ($status:ident, $accept:expr, $body:expr, $etag:expr) => {{
         HttpResponse::$status()
-            .header(CACHE_CONTROL, CacheControl(vec![CacheDirective::NoCache]))
-            .header(ETAG, EntityTag::new(false, $etag))
-            .header(
+            .insert_header((CACHE_CONTROL, CacheControl(vec![CacheDirective::NoCache])))
+            .insert_header((ETAG, EntityTag::new(false, $etag)))
+            .insert_header((
                 CONTENT_TYPE,
                 if $accept == ContentType::json() {
                     ContentType::json()
                 } else {
                     CONTENT_TYPE_SVG.clone()
                 },
-            )
+            ))
             .body($body)
     }};
 }
@@ -84,10 +87,11 @@ struct BadgeQuery {
 #[get("/b1/{domain}/{user}/{repo}")]
 async fn create_badge(
     request: HttpRequest,
-    web::Path((domain, user, repo)): web::Path<(String, String, String)>,
+    path: web::Path<(String, String, String)>,
     web::Query(query): web::Query<BadgeQuery>,
 ) -> actix_web::Result<HttpResponse> {
-    let category = query.category.unwrap_or(String::from("lines"));
+    let (domain, user, repo) = path.into_inner();
+    let category = query.category.unwrap_or_else(|| String::from("lines"));
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -101,8 +105,8 @@ async fn create_badge(
 
     let mut domain = percent_encoding::percent_decode_str(&domain).decode_utf8()?;
 
-    // For backwards compatability if a domain isn't specified we append `.com`.
-    if !domain.contains(".") {
+    // For backwards compatibility if a domain isn't specified we append `.com`.
+    if !domain.contains('.') {
         domain += ".com";
     }
 
@@ -118,6 +122,7 @@ async fn create_badge(
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
+        log::debug!("Checking If-None-Match: {}", sha);
         let sha_tag = EntityTag::new(false, sha.clone());
         let found_match = match if_none_match {
             IfNoneMatch::Any => false,
@@ -134,7 +139,7 @@ async fn create_badge(
         }
     }
 
-    let entry = get_statistics(&url, &sha).map_err(|err| actix_web::error::ErrorBadRequest(err))?;
+    let entry = get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
         log::info!("{}#{} Cache hit", url, sha);
@@ -175,7 +180,7 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
     let temp_path = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
-        .args(&["clone", &url, &temp_path, "--depth", "1"])
+        .args(&["clone", url, temp_path, "--depth", "1"])
         .output()?;
 
     let mut stats = Language::new();
