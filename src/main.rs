@@ -153,7 +153,7 @@ async fn create_badge(
         "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
-        lines = stats.lines,
+        lines = stats.lines(),
         code = stats.code,
         comments = stats.comments,
         blanks = stats.blanks
@@ -194,7 +194,7 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
         stats += language;
     }
 
-    for stat in &mut stats.stats {
+    for stat in &mut stats.reports {
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
     }
 
@@ -217,10 +217,10 @@ fn make_badge(
 
     let (amount, label) = match &*category {
         "code" => (stats.code, if message.is_empty() {CODE} else {message}),
-        "files" => (stats.stats.len(), if message.is_empty() {FILES} else {message}),
+        "files" => (stats.reports.len(), if message.is_empty() {FILES} else {message}),
         "blanks" => (stats.blanks, if message.is_empty() {BLANKS} else {message}),
         "comments" => (stats.comments, if message.is_empty() {COMMENTS} else {message}),
-        _ => (stats.lines, if message.is_empty() {LINES} else {message}),
+        _ => (stats.lines(), if message.is_empty() {LINES} else {message}),
     };
 
     let amount = if amount >= BILLION {

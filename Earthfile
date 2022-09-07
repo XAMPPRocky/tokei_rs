@@ -35,7 +35,7 @@ build:
     SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs/cache/build
 
 docker:
-    FROM ubuntu:focal
+    FROM ubuntu:jammy
     EXPOSE 8000
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
