@@ -216,11 +216,11 @@ fn make_badge(
     }
 
     let (amount, label) = match &*category {
-        "code" => (stats.code, if message == "" {CODE} else {&message}),
-        "files" => (stats.stats.len(), if message == "" {FILES} else {&message}),
-        "blanks" => (stats.blanks, if message == "" {BLANKS} else {&message}),
-        "comments" => (stats.comments, if message == "" {COMMENTS} else {&message}),
-        _ => (stats.lines, if message == "" {LINES} else {&message}),
+        "code" => (stats.code, if message.is_empty() {CODE} else {message}),
+        "files" => (stats.stats.len(), if message.is_empty() {FILES} else {message}),
+        "blanks" => (stats.blanks, if message.is_empty() {BLANKS} else {message}),
+        "comments" => (stats.comments, if message.is_empty() {COMMENTS} else {message}),
+        _ => (stats.lines, if message.is_empty() {LINES} else {message}),
     };
 
     let amount = if amount >= BILLION {
