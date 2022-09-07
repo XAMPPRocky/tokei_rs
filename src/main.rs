@@ -48,7 +48,7 @@ async fn main() -> std::io::Result<()> {
 #[get("/")]
 async fn redirect_index() -> HttpResponse {
     HttpResponse::PermanentRedirect()
-        .insert_header((LOCATION, "https://github.com/XAMPPRocky/tokei"))
+        .insert_header((LOCATION, "https://github.com/elliotwutingfeng/tokei"))
         .finish()
 }
 
@@ -153,7 +153,7 @@ async fn create_badge(
         "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
-        lines = stats.lines(),
+        lines = stats.lines,
         code = stats.code,
         comments = stats.comments,
         blanks = stats.blanks
@@ -194,7 +194,7 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
         stats += language;
     }
 
-    for stat in &mut stats.reports {
+    for stat in &mut stats.stats {
         stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
     }
 
@@ -217,10 +217,10 @@ fn make_badge(
 
     let (amount, label) = match &*category {
         "code" => (stats.code, if message == "" {CODE} else {&message}),
-        "files" => (stats.reports.len(), if message == "" {FILES} else {&message}),
+        "files" => (stats.stats.len(), if message == "" {FILES} else {&message}),
         "blanks" => (stats.blanks, if message == "" {BLANKS} else {&message}),
         "comments" => (stats.comments, if message == "" {COMMENTS} else {&message}),
-        _ => (stats.lines(), if message == "" {LINES} else {&message}),
+        _ => (stats.lines, if message == "" {LINES} else {&message}),
     };
 
     let amount = if amount >= BILLION {
