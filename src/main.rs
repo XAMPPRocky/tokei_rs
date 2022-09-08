@@ -8,7 +8,7 @@ use actix_web::{
     },
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
-use badge::{Badge, BadgeOptions};
+use rsbadges::{Badge, Style};
 use cached::Cached;
 use once_cell::sync::Lazy;
 use tempfile::TempDir;
@@ -17,6 +17,7 @@ use tokei::{Language, Languages};
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
 const BLUE: &str = "#007ec6";
+const GREY: &str = "#555555";
 const CODE: &str = "lines of code";
 const COMMENTS: &str = "comments";
 const FILES: &str = "files";
@@ -48,7 +49,7 @@ async fn main() -> std::io::Result<()> {
 #[get("/")]
 async fn redirect_index() -> HttpResponse {
     HttpResponse::PermanentRedirect()
-        .insert_header((LOCATION, "https://github.com/elliotwutingfeng/tokei"))
+        .insert_header((LOCATION, "https://github.com/XAMPPRocky/tokei"))
         .finish()
 }
 
@@ -83,6 +84,7 @@ macro_rules! respond {
 struct BadgeQuery {
     category: Option<String>,
     message: Option<String>,
+    style: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -94,6 +96,7 @@ async fn create_badge(
     let (domain, user, repo) = path.into_inner();
     let category = query.category.unwrap_or_else(|| String::from("lines"));
     let message = query.message.unwrap_or_else(|| String::from(""));
+    let style: String = query.style.unwrap_or_else(|| String::from("plastic"));
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -159,7 +162,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category, &message)?;
+    let badge = make_badge(&content_type, &stats, &category, &message, &style)?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
@@ -209,18 +212,19 @@ fn make_badge(
     content_type: &ContentType,
     stats: &Language,
     category: &str,
-    message: &str,
+    label: &str,
+    style: &str,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
     let (amount, label) = match &*category {
-        "code" => (stats.code, if message.is_empty() {CODE} else {message}),
-        "files" => (stats.reports.len(), if message.is_empty() {FILES} else {message}),
-        "blanks" => (stats.blanks, if message.is_empty() {BLANKS} else {message}),
-        "comments" => (stats.comments, if message.is_empty() {COMMENTS} else {message}),
-        _ => (stats.lines(), if message.is_empty() {LINES} else {message}),
+        "code" => (stats.code, if label.trim().is_empty() {CODE} else {label}),
+        "files" => (stats.reports.len(), if label.trim().is_empty() {FILES} else {label}),
+        "blanks" => (stats.blanks, if label.trim().is_empty() {BLANKS} else {label}),
+        "comments" => (stats.comments, if label.trim().is_empty() {COMMENTS} else {label}),
+        _ => (stats.lines(), if label.trim().is_empty() {LINES} else {label}),
     };
 
     let amount = if amount >= BILLION {
@@ -233,11 +237,22 @@ fn make_badge(
         amount.to_string()
     };
 
-    let options = BadgeOptions {
-        subject: String::from(label),
-        status: amount,
-        color: String::from(BLUE),
+    let badge = Badge {
+        label_text: String::from(label),
+        label_color:String::from(GREY),
+        msg_text: amount,
+        msg_color: String::from(BLUE),
+        ..Badge::default()
     };
 
-    Ok(Badge::new(options).unwrap().to_svg())
+    let badge_style = match &*style {
+        "flat" =>  Style::Flat(badge),
+        "flat-square" =>  Style::FlatSquare(badge),
+        "plastic" =>  Style::Plastic(badge),
+        "for-the-badge" =>  Style::ForTheBadge(badge),
+        "social" =>  Style::Social(badge),
+        _ =>  Style::Flat(badge),
+    };    
+
+    Ok(badge_style.generate_svg().unwrap())
 }
