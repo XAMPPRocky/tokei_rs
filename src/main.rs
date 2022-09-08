@@ -83,7 +83,7 @@ macro_rules! respond {
 #[derive(serde::Deserialize)]
 struct BadgeQuery {
     category: Option<String>,
-    message: Option<String>,
+    label: Option<String>,
     style: Option<String>,
 }
 
@@ -95,7 +95,7 @@ async fn create_badge(
 ) -> actix_web::Result<HttpResponse> {
     let (domain, user, repo) = path.into_inner();
     let category = query.category.unwrap_or_else(|| String::from("lines"));
-    let message = query.message.unwrap_or_else(|| String::from(""));
+    let label = query.label.unwrap_or_else(|| String::from(""));
     let style: String = query.style.unwrap_or_else(|| String::from("plastic"));
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
@@ -162,7 +162,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category, &message, &style)?;
+    let badge = make_badge(&content_type, &stats, &category, &label, &style)?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
