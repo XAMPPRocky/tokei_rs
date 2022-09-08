@@ -47,6 +47,10 @@ compose:
     COPY compose.yml ./
     WITH DOCKER \
             --compose compose.yml \
+<<<<<<< HEAD
             --load ghcr.io/xampprocky/tokei_rs:latest(+docker)
+=======
+            --load ghcr.io/elliotwutingfeng/tokei_rs:latest=(+docker)
+>>>>>>> master
         RUN docker compose down && docker compose up --remove-orphans
     END
