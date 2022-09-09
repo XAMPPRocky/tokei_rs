@@ -48,4 +48,4 @@ See [the graph](https://github.com/XAMPPRocky/tokei_rs/graphs/contributors) for 
 
 tokei.rs is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
 
-See [LICENCE-APACHE](./LICENCE-APACHE), [LICENCE-MIT](./LICENCE-MIT) for more information.
+See [LICENSE-APACHE](./LICENSE-APACHE), [LICENSE-MIT](./LICENSE-MIT) for more information.
