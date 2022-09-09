@@ -35,7 +35,7 @@ build:
     SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/build
 
 docker:
-    FROM ubuntu:focal
+    FROM ubuntu:jammy
     EXPOSE 8000
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
@@ -47,6 +47,6 @@ compose:
     COPY compose.yml ./
     WITH DOCKER \
             --compose compose.yml \
-            --load ghcr.io/xampprocky/tokei_rs:latest=(+docker)
+            --load ghcr.io/xampprocky/tokei_rs:latest(+docker)
         RUN docker compose down && docker compose up --remove-orphans
     END
