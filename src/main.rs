@@ -13,6 +13,7 @@ use cached::Cached;
 use once_cell::sync::Lazy;
 use tempfile::TempDir;
 use tokei::{Language, Languages};
+use csscolorparser::parse;
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
@@ -85,6 +86,7 @@ struct BadgeQuery {
     category: Option<String>,
     label: Option<String>,
     style: Option<String>,
+    color: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -94,9 +96,13 @@ async fn create_badge(
     web::Query(query): web::Query<BadgeQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let (domain, user, repo) = path.into_inner();
-    let category = query.category.unwrap_or_else(|| String::from("lines"));
-    let label = query.label.unwrap_or_else(|| String::from(""));
-    let style: String = query.style.unwrap_or_else(|| String::from("plastic"));
+    let category = query.category.unwrap_or_else(|| "lines".to_owned());
+    let (label, no_label) = match query.label {
+        Some(v) => (v, false),
+        None => ("".to_owned(), true),
+    };
+    let style: String = query.style.unwrap_or_else(|| "plastic".to_owned());
+    let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -162,7 +168,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category, &label, &style)?;
+    let badge = make_badge(&content_type, &stats, &category, &label, &style, &color, no_label)?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
@@ -208,23 +214,47 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
+fn make_badge_style(label: &str, amount: &str, color: &str, style: &str) -> Style {
+    let badge = Badge {
+        label_text: label.to_owned(),
+        label_color: GREY.to_owned(),
+        msg_text: amount.to_owned(),
+        msg_color: match parse(color) {
+            Ok(result) => result.to_hex_string(),
+            Err(_error) => BLUE.to_owned()
+        },
+        ..Badge::default()
+    };
+
+    match &*style {
+        "flat" =>  Style::Flat(badge),
+        "flat-square" =>  Style::FlatSquare(badge),
+        "plastic" =>  Style::Plastic(badge),
+        "for-the-badge" =>  Style::ForTheBadge(badge),
+        "social" =>  Style::Social(badge),
+        _ =>  Style::Flat(badge),
+    }
+}
+
 fn make_badge(
     content_type: &ContentType,
     stats: &Language,
     category: &str,
     label: &str,
     style: &str,
+    color: &str,
+    no_label: bool,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
     let (amount, label) = match &*category {
-        "code" => (stats.code, if label.trim().is_empty() {CODE} else {label}),
-        "files" => (stats.reports.len(), if label.trim().is_empty() {FILES} else {label}),
-        "blanks" => (stats.blanks, if label.trim().is_empty() {BLANKS} else {label}),
-        "comments" => (stats.comments, if label.trim().is_empty() {COMMENTS} else {label}),
-        _ => (stats.lines(), if label.trim().is_empty() {LINES} else {label}),
+        "code" => (stats.code, if no_label {CODE} else {label}),
+        "files" => (stats.reports.len(), if no_label {FILES} else {label}),
+        "blanks" => (stats.blanks, if no_label {BLANKS} else {label}),
+        "comments" => (stats.comments, if no_label {COMMENTS} else {label}),
+        _ => (stats.lines(), if no_label {LINES} else {label}),
     };
 
     let amount = if amount >= BILLION {
@@ -237,22 +267,5 @@ fn make_badge(
         amount.to_string()
     };
 
-    let badge = Badge {
-        label_text: String::from(label),
-        label_color:String::from(GREY),
-        msg_text: amount,
-        msg_color: String::from(BLUE),
-        ..Badge::default()
-    };
-
-    let badge_style = match &*style {
-        "flat" =>  Style::Flat(badge),
-        "flat-square" =>  Style::FlatSquare(badge),
-        "plastic" =>  Style::Plastic(badge),
-        "for-the-badge" =>  Style::ForTheBadge(badge),
-        "social" =>  Style::Social(badge),
-        _ =>  Style::Flat(badge),
-    };    
-
-    Ok(badge_style.generate_svg().unwrap())
+    Ok(make_badge_style(label, &amount, color, style).generate_svg().unwrap())
 }
