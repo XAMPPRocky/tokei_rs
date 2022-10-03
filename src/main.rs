@@ -97,7 +97,10 @@ async fn create_badge(
 ) -> actix_web::Result<HttpResponse> {
     let (domain, user, repo) = path.into_inner();
     let category = query.category.unwrap_or_else(|| "lines".to_owned());
-    let label = query.label.unwrap_or_else(|| "".to_owned());
+    let (label, no_label) = match query.label {
+        Some(v) => (v, false),
+        None => ("".to_owned(), true),
+    };
     let style: String = query.style.unwrap_or_else(|| "plastic".to_owned());
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
 
@@ -165,7 +168,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category, &label, &style, &color)?;
+    let badge = make_badge(&content_type, &stats, &category, &label, &style, &color, no_label)?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
@@ -240,17 +243,18 @@ fn make_badge(
     label: &str,
     style: &str,
     color: &str,
+    no_label: bool,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
     let (amount, label) = match &*category {
-        "code" => (stats.code, if label.trim().is_empty() {CODE} else {label}),
-        "files" => (stats.reports.len(), if label.trim().is_empty() {FILES} else {label}),
-        "blanks" => (stats.blanks, if label.trim().is_empty() {BLANKS} else {label}),
-        "comments" => (stats.comments, if label.trim().is_empty() {COMMENTS} else {label}),
-        _ => (stats.lines(), if label.trim().is_empty() {LINES} else {label}),
+        "code" => (stats.code, if no_label {CODE} else {label}),
+        "files" => (stats.reports.len(), if no_label {FILES} else {label}),
+        "blanks" => (stats.blanks, if no_label {BLANKS} else {label}),
+        "comments" => (stats.comments, if no_label {COMMENTS} else {label}),
+        _ => (stats.lines(), if no_label {LINES} else {label}),
     };
 
     let amount = if amount >= BILLION {
