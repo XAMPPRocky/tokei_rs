@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master, dev] # TODO remove dev
 
 jobs:
   build:
