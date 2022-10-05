@@ -4,14 +4,14 @@ WORKDIR /tokei_rs
 
 install-chef:
     RUN cargo install cargo-chef
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/install-chef
+    SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs/cache/install-chef
 
 prepare:
     FROM +install-chef
     COPY --dir . .
     RUN cargo chef prepare --recipe-path recipe.json
     SAVE ARTIFACT recipe.json
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/prepare
+    SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs/cache/prepare
 
 build-deps:
     FROM +install-chef
@@ -20,7 +20,7 @@ build-deps:
     # build dependencies as separate layer to be cached
     RUN cargo chef cook --release --recipe-path recipe.json
 
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/deps
+    SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs/cache/deps
 
 build:
     FROM +build-deps
@@ -32,14 +32,14 @@ build:
     RUN cargo build --release
 
     SAVE ARTIFACT target/release/tokei_rs tokei_rs
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs/cache/build
+    SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs/cache/build
 
 docker:
     FROM ubuntu:jammy
     EXPOSE 8000
     COPY +build/tokei_rs tokei_rs
     ENTRYPOINT ["./tokei_rs"]
-    SAVE IMAGE --push ghcr.io/xampprocky/tokei_rs
+    SAVE IMAGE --push ghcr.io/elliotwutingfeng/tokei_rs
 
 compose:
     FROM earthly/dind:alpine
@@ -47,6 +47,6 @@ compose:
     COPY compose.yml ./
     WITH DOCKER \
             --compose compose.yml \
-            --load ghcr.io/xampprocky/tokei_rs:latest(+docker)
+            --load ghcr.io/elliotwutingfeng/tokei_rs:latest(+docker)
         RUN docker compose down && docker compose up --remove-orphans
     END
