@@ -50,10 +50,18 @@ By default, the badge uses the "flat" style. You can customize the badge style b
 
 ## Color
 
-By default, the badge uses the color blue `#007ec6`. You can customize the badge color by using the `?color=` query string. Supported color formats include named colors and RGB hexadecimal, a full list of supported formats can be found [here](https://crates.io/crates/csscolorparser). For example, [![custom color](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&style=for-the-badge&color=ff0000)](https://github.com/XAMPPRocky/tokei).
+By default, the badge uses the color blue `#007ec6`. You can customize the badge color by using the `?color=` query string. Supported color formats include named colors and RGB hexadecimal, a full list of supported formats can be found [here](https://crates.io/crates/csscolorparser). For example, [![custom color](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&color=ff0000)](https://github.com/XAMPPRocky/tokei).
 
 ```sh
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&style=for-the-badge&color=ff0000)](https://github.com/XAMPPRocky/tokei).
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&color=ff0000)](https://github.com/XAMPPRocky/tokei).
+```
+
+## Logo
+
+You can customize the badge logo (SVG format) by passing its full URL to the `?logo=` query string. For example, [![custom logo](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&logo=https://simpleicons.org/icons/rust.svg)](https://github.com/XAMPPRocky/tokei).
+
+```sh
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&logo=https://simpleicons.org/icons/rust.svg)](https://github.com/XAMPPRocky/tokei).
 ```
 
 ## Copyright and License
