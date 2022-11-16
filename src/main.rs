@@ -130,7 +130,7 @@ async fn create_badge(
         .iter()
         .position(|&b| b == b'\t')
         .filter(|i| *i == HASH_LENGTH)
-        .map(|i| (&ls_remote.stdout[..i]).to_owned())
+        .map(|i| ls_remote.stdout[..i].to_owned())
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
@@ -202,7 +202,7 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
     let temp_path = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
-        .args(&["clone", url, temp_path, "--depth", "1"])
+        .args(["clone", url, temp_path, "--depth", "1"])
         .output()?;
 
     let mut stats = Language::new();
@@ -247,7 +247,7 @@ fn make_badge_style(
 
     let badge_with_logo = Badge {
         logo: logo.to_owned(),
-        embed_logo: logo != "",
+        embed_logo: !logo.is_empty(),
         ..badge(label, amount, color)
     };
 
@@ -284,7 +284,7 @@ fn make_badge(
         return Ok(serde_json::to_string(&stats)?);
     }
 
-    let (amount, label) = match &*category {
+    let (amount, label) = match category {
         "code" => (stats.code, if no_label { CODE } else { label }),
         "files" => (stats.reports.len(), if no_label { FILES } else { label }),
         "blanks" => (stats.blanks, if no_label { BLANKS } else { label }),
