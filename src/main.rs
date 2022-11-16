@@ -270,6 +270,7 @@ fn make_badge_style(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_badge(
     content_type: &ContentType,
     stats: &Language,
