@@ -50,7 +50,7 @@ async fn main() -> std::io::Result<()> {
 #[get("/")]
 async fn redirect_index() -> HttpResponse {
     HttpResponse::PermanentRedirect()
-        .insert_header((LOCATION, "https://github.com/elliotwutingfeng/tokei"))
+        .insert_header((LOCATION, "https://github.com/XAMPPRocky/tokei"))
         .finish()
 }
 

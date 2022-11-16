@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, dev] # TODO remove dev
+    branches: [master]
 
 jobs:
   build:
@@ -23,10 +23,10 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Earthly version
         run: earthly --version
 
       - name: Run build
-        run: earthly --ci --push +docker --repo 'ghcr.io/elliotwutingfeng/tokei_rs'
+        run: earthly --ci --push +docker --repo 'ghcr.io/XAMPPRocky/tokei_rs'
