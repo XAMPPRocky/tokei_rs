@@ -14,8 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install earthly
-        run: "sudo /bin/sh -c 'wget https://github.com/earthly/earthly/releases/download/v0.6.24/earthly-linux-amd64 -O /usr/local/bin/earthly && chmod +x /usr/local/bin/earthly'"
+      - uses: earthly/actions-setup@v1
+        with:
+          version: "latest"
 
       - name: Login to Packages Container registry
         uses: docker/login-action@v2
@@ -28,4 +29,4 @@ jobs:
         run: earthly --version
 
       - name: Run build
-        run: earthly --ci --push +docker
+        run: earthly --ci --push +docker --repo 'ghcr.io/XAMPPRocky/tokei_rs'

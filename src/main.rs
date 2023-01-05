@@ -8,12 +8,12 @@ use actix_web::{
     },
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
-use rsbadges::{Badge, Style};
 use cached::Cached;
+use csscolorparser::parse;
 use once_cell::sync::Lazy;
+use rsbadges::{Badge, Style};
 use tempfile::TempDir;
 use tokei::{Language, Languages};
-use csscolorparser::parse;
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
@@ -87,6 +87,7 @@ struct BadgeQuery {
     label: Option<String>,
     style: Option<String>,
     color: Option<String>,
+    logo: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -103,6 +104,7 @@ async fn create_badge(
     };
     let style: String = query.style.unwrap_or_else(|| "plastic".to_owned());
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
+    let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -128,7 +130,7 @@ async fn create_badge(
         .iter()
         .position(|&b| b == b'\t')
         .filter(|i| *i == HASH_LENGTH)
-        .map(|i| (&ls_remote.stdout[..i]).to_owned())
+        .map(|i| ls_remote.stdout[..i].to_owned())
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
@@ -168,7 +170,16 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(&content_type, &stats, &category, &label, &style, &color, no_label)?;
+    let badge = make_badge(
+        &content_type,
+        &stats,
+        &category,
+        &label,
+        &style,
+        &color,
+        &logo,
+        no_label,
+    )?;
 
     Ok(respond!(Ok, content_type, badge, sha))
 }
@@ -191,7 +202,7 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
     let temp_path = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
-        .args(&["clone", url, temp_path, "--depth", "1"])
+        .args(["clone", url, temp_path, "--depth", "1"])
         .output()?;
 
     let mut stats = Language::new();
@@ -214,28 +225,52 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge_style(label: &str, amount: &str, color: &str, style: &str) -> Style {
-    let badge = Badge {
-        label_text: label.to_owned(),
-        label_color: GREY.to_owned(),
-        msg_text: amount.to_owned(),
-        msg_color: match parse(color) {
-            Ok(result) => result.to_hex_string(),
-            Err(_error) => BLUE.to_owned()
-        },
-        ..Badge::default()
+fn make_badge_style(
+    label: &str,
+    amount: &str,
+    color: &str,
+    style: &str,
+    logo: &str,
+) -> Result<String, actix_web::Error> {
+    fn badge(label: &str, amount: &str, color: &str) -> Badge {
+        Badge {
+            label_text: label.to_owned(),
+            label_color: GREY.to_owned(),
+            msg_text: amount.to_owned(),
+            msg_color: match parse(color) {
+                Ok(result) => result.to_hex_string(),
+                Err(_error) => BLUE.to_owned(),
+            },
+            ..Badge::default()
+        }
+    }
+
+    let badge_with_logo = Badge {
+        logo: logo.to_owned(),
+        embed_logo: !logo.is_empty(),
+        ..badge(label, amount, color)
     };
 
-    match &*style {
-        "flat" =>  Style::Flat(badge),
-        "flat-square" =>  Style::FlatSquare(badge),
-        "plastic" =>  Style::Plastic(badge),
-        "for-the-badge" =>  Style::ForTheBadge(badge),
-        "social" =>  Style::Social(badge),
-        _ =>  Style::Flat(badge),
+    fn stylize_badge(badge: Badge, style: &str) -> Style {
+        match style {
+            "flat" => Style::Flat(badge),
+            "flat-square" => Style::FlatSquare(badge),
+            "plastic" => Style::Plastic(badge),
+            "for-the-badge" => Style::ForTheBadge(badge),
+            "social" => Style::Social(badge),
+            _ => Style::Flat(badge),
+        }
+    }
+
+    match stylize_badge(badge_with_logo, style).generate_svg() {
+        Ok(s) => Ok(s),
+        Err(_e) => Ok(stylize_badge(badge(label, amount, color), style)
+            .generate_svg()
+            .unwrap()),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_badge(
     content_type: &ContentType,
     stats: &Language,
@@ -243,18 +278,19 @@ fn make_badge(
     label: &str,
     style: &str,
     color: &str,
+    logo: &str,
     no_label: bool,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
     }
 
-    let (amount, label) = match &*category {
-        "code" => (stats.code, if no_label {CODE} else {label}),
-        "files" => (stats.reports.len(), if no_label {FILES} else {label}),
-        "blanks" => (stats.blanks, if no_label {BLANKS} else {label}),
-        "comments" => (stats.comments, if no_label {COMMENTS} else {label}),
-        _ => (stats.lines(), if no_label {LINES} else {label}),
+    let (amount, label) = match category {
+        "code" => (stats.code, if no_label { CODE } else { label }),
+        "files" => (stats.reports.len(), if no_label { FILES } else { label }),
+        "blanks" => (stats.blanks, if no_label { BLANKS } else { label }),
+        "comments" => (stats.comments, if no_label { COMMENTS } else { label }),
+        _ => (stats.lines(), if no_label { LINES } else { label }),
     };
 
     let amount = if amount >= BILLION {
@@ -267,5 +303,5 @@ fn make_badge(
         amount.to_string()
     };
 
-    Ok(make_badge_style(label, &amount, color, style).generate_svg().unwrap())
+    make_badge_style(label, &amount, color, style, logo)
 }
