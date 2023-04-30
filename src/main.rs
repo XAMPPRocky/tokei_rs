@@ -145,6 +145,7 @@ async fn create_badge(
     // Caching should be insensitive to order of languages specified by user
     // e.g. "?type=Rust,JSON" and "?type=JSON,Rust" are equivalent
     language_types.sort();
+    language_types.dedup();
     // Use Base64-encoding as `language_types` may contain characters disallowed by EntityTag (such as whitespace)
     let language_types_encoded =
         general_purpose::STANDARD_NO_PAD.encode(format!("{:?}", language_types));
