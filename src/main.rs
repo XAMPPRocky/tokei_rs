@@ -8,6 +8,7 @@ use actix_web::{
     },
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
+use base64::{engine::general_purpose, Engine as _};
 use cached::Cached;
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
@@ -88,6 +89,7 @@ struct BadgeQuery {
     style: Option<String>,
     color: Option<String>,
     logo: Option<String>,
+    r#type: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -105,6 +107,7 @@ async fn create_badge(
     let style: String = query.style.unwrap_or_else(|| "plastic".to_owned());
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
+    let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -134,36 +137,48 @@ async fn create_badge(
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
+    let mut language_types: Vec<tokei::LanguageType> = r#type
+        .split(',')
+        .map(str::parse::<tokei::LanguageType>)
+        .filter_map(Result::ok)
+        .collect();
+    language_types.sort();
+    let language_types_encoded =
+        general_purpose::STANDARD_NO_PAD.encode(format!("{:?}", language_types));
+
+    let entity_hash = format!("{}#{}", sha, language_types_encoded);
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
-        log::debug!("Checking If-None-Match: {}", sha);
-        let sha_tag = EntityTag::new(false, sha.clone());
+        log::debug!("Checking If-None-Match: {}", entity_hash);
+        let entity_tag = EntityTag::new(false, entity_hash.clone());
         let found_match = match if_none_match {
             IfNoneMatch::Any => false,
-            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&sha_tag)),
+            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&entity_tag)),
         };
 
         if found_match {
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, &sha));
-            log::info!("{}#{} Not Modified", url, sha);
+                .cache_get(&repo_identifier(&url, &sha, &language_types));
+            log::info!("{}#{} Not Modified", url, entity_hash);
             return Ok(respond!(NotModified));
         }
     }
 
-    let entry = get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
+    let entry =
+        get_statistics(&url, &sha, &language_types).map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
-        log::info!("{}#{} Cache hit", url, sha);
+        log::info!("{}#{} Cache hit", url, entity_hash);
     }
 
     let stats = entry.value;
 
     log::info!(
-        "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha}#{language_types:?} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
+        language_types = language_types,
         lines = stats.lines(),
         code = stats.code,
         comments = stats.comments,
@@ -181,11 +196,11 @@ async fn create_badge(
         no_label,
     )?;
 
-    Ok(respond!(Ok, content_type, badge, sha))
+    Ok(respond!(Ok, content_type, badge, entity_hash))
 }
 
-fn repo_identifier(url: &str, sha: &str) -> String {
-    format!("{}#{}", url, sha)
+fn repo_identifier(url: &str, sha: &str, language_types: &Vec<tokei::LanguageType>) -> String {
+    format!("{}#{}#{:?}", url, sha, language_types)
 }
 
 #[cached::proc_macro::cached(
@@ -194,9 +209,13 @@ fn repo_identifier(url: &str, sha: &str) -> String {
     with_cached_flag = true,
     type = "cached::TimedSizedCache<String, cached::Return<Language>>",
     create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
-    convert = r#"{ repo_identifier(url, _sha) }"#
+    convert = r#"{ repo_identifier(url, _sha, language_types) }"#
 )]
-fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language>> {
+fn get_statistics(
+    url: &str,
+    _sha: &str,
+    language_types: &Vec<tokei::LanguageType>,
+) -> eyre::Result<cached::Return<Language>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -208,7 +227,15 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
     let mut stats = Language::new();
     let mut languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
-    languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
+    let config = tokei::Config {
+        types: if language_types.is_empty() {
+            None
+        } else {
+            Some(language_types.to_owned())
+        },
+        ..tokei::Config::default()
+    };
+    languages.get_statistics(&[temp_path], &[], &config);
 
     for (_, language) in languages {
         stats += language;
