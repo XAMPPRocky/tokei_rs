@@ -142,10 +142,14 @@ async fn create_badge(
         .map(str::parse::<tokei::LanguageType>)
         .filter_map(Result::ok)
         .collect();
+    // Caching should be insensitive to order of languages specified by user
+    // e.g. "?type=Rust,JSON" and "?type=JSON,Rust" are equivalent
     language_types.sort();
+    // Use Base64-encoding as `language_types` may contain characters disallowed by EntityTag (such as whitespace)
     let language_types_encoded =
         general_purpose::STANDARD_NO_PAD.encode(format!("{:?}", language_types));
 
+    // Check if both git commit `sha` and `language_types` match
     let entity_hash = format!("{}#{}", sha, language_types_encoded);
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}", entity_hash);
