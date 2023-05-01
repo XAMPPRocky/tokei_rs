@@ -13,6 +13,7 @@ use cached::Cached;
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
 use rsbadges::{Badge, Style};
+use std::collections::HashSet;
 use tempfile::TempDir;
 use tokei::{Language, Languages};
 
@@ -137,15 +138,16 @@ async fn create_badge(
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    let mut language_types: Vec<tokei::LanguageType> = r#type
-        .split(',')
-        .map(str::parse::<tokei::LanguageType>)
-        .filter_map(Result::ok)
-        .collect();
     // Caching should be insensitive to order of languages specified by user
     // e.g. "?type=Rust,JSON" and "?type=JSON,Rust" are equivalent
-    language_types.sort();
-    language_types.dedup();
+    let language_types: Vec<tokei::LanguageType> = r#type
+        .split(',')
+        .filter_map(|s| str::parse::<tokei::LanguageType>(s).ok())
+        .into_iter()
+        .collect::<HashSet<tokei::LanguageType>>()
+        .into_iter()
+        .collect();
+
     // Use Base64-encoding as `language_types` may contain characters disallowed by EntityTag (such as whitespace)
     let language_types_encoded =
         general_purpose::STANDARD_NO_PAD.encode(format!("{:?}", language_types));
