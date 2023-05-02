@@ -8,14 +8,13 @@ use actix_web::{
     },
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
-use base64::{engine::general_purpose, Engine as _};
-use cached::Cached;
+use cached::{Cached, Return};
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
 use rsbadges::{Badge, Style};
 use std::collections::HashSet;
 use tempfile::TempDir;
-use tokei::{Language, Languages};
+use tokei::{Language, LanguageType, Languages};
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
@@ -138,25 +137,10 @@ async fn create_badge(
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    // Caching should be insensitive to order of languages specified by user
-    // e.g. "?type=Rust,JSON" and "?type=JSON,Rust" are equivalent
-    let language_types: Vec<tokei::LanguageType> = r#type
-        .split(',')
-        .filter_map(|s| str::parse::<tokei::LanguageType>(s).ok())
-        .into_iter()
-        .collect::<HashSet<tokei::LanguageType>>()
-        .into_iter()
-        .collect();
-
-    // Use Base64-encoding as `language_types` may contain characters disallowed by EntityTag (such as whitespace)
-    let language_types_encoded =
-        general_purpose::STANDARD_NO_PAD.encode(format!("{:?}", language_types));
-
-    // Check if both git commit `sha` and `language_types` match
-    let entity_hash = format!("{}#{}", sha, language_types_encoded);
+    // Check if git commit `sha` matches
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
-        log::debug!("Checking If-None-Match: {}", entity_hash);
-        let entity_tag = EntityTag::new(false, entity_hash.clone());
+        log::debug!("Checking If-None-Match: {}", sha);
+        let entity_tag = EntityTag::new(false, sha.clone());
         let found_match = match if_none_match {
             IfNoneMatch::Any => false,
             IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&entity_tag)),
@@ -166,26 +150,39 @@ async fn create_badge(
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, &sha, &language_types));
-            log::info!("{}#{} Not Modified", url, entity_hash);
+                .cache_get(&repo_identifier(&url, &sha));
+            log::info!("{}#{} Not Modified", url, sha);
             return Ok(respond!(NotModified));
         }
     }
 
-    let entry =
-        get_statistics(&url, &sha, &language_types).map_err(actix_web::error::ErrorBadRequest)?;
+    let entry: Return<Vec<(LanguageType, Language)>> =
+        get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
-        log::info!("{}#{} Cache hit", url, entity_hash);
+        log::info!("{}#{} Cache hit", url, sha);
     }
 
-    let stats = entry.value;
+    let language_types: HashSet<LanguageType> = r#type
+        .split(',')
+        .filter_map(|s| str::parse::<LanguageType>(s).ok())
+        .into_iter()
+        .collect::<HashSet<LanguageType>>();
+
+    let mut stats = Language::new();
+    let languages: Vec<(LanguageType, Language)> = entry.value;
+
+    for (language_type, language) in languages {
+        if language_types.is_empty() || language_types.contains(&language_type) {
+            stats += language;
+        }
+    }
 
     log::info!(
-        "{url}#{sha}#{language_types:?} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha} - Types {language_types:?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
-        language_types = language_types,
+        language_types = language_types.into_iter(),
         lines = stats.lines(),
         code = stats.code,
         comments = stats.comments,
@@ -203,26 +200,25 @@ async fn create_badge(
         no_label,
     )?;
 
-    Ok(respond!(Ok, content_type, badge, entity_hash))
+    Ok(respond!(Ok, content_type, badge, sha))
 }
 
-fn repo_identifier(url: &str, sha: &str, language_types: &Vec<tokei::LanguageType>) -> String {
-    format!("{}#{}#{:?}", url, sha, language_types)
+fn repo_identifier(url: &str, sha: &str) -> String {
+    format!("{}#{}", url, sha)
 }
 
 #[cached::proc_macro::cached(
     name = "CACHE",
     result = true,
     with_cached_flag = true,
-    type = "cached::TimedSizedCache<String, cached::Return<Language>>",
+    type = "cached::TimedSizedCache<String, cached::Return<Vec<(LanguageType,Language)>>>",
     create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
-    convert = r#"{ repo_identifier(url, _sha, language_types) }"#
+    convert = r#"{ repo_identifier(url, _sha) }"#
 )]
 fn get_statistics(
     url: &str,
     _sha: &str,
-    language_types: &Vec<tokei::LanguageType>,
-) -> eyre::Result<cached::Return<Language>> {
+) -> eyre::Result<cached::Return<Vec<(LanguageType, Language)>>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -231,28 +227,18 @@ fn get_statistics(
         .args(["clone", url, temp_path, "--depth", "1"])
         .output()?;
 
-    let mut stats = Language::new();
     let mut languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
-    let config = tokei::Config {
-        types: if language_types.is_empty() {
-            None
-        } else {
-            Some(language_types.to_owned())
-        },
-        ..tokei::Config::default()
-    };
-    languages.get_statistics(&[temp_path], &[], &config);
+    languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
-    for (_, language) in languages {
-        stats += language;
+    let mut iter = languages.iter_mut();
+    while let Some((_, language)) = iter.next() {
+        for report in &mut language.reports {
+            report.name = report.name.strip_prefix(temp_path)?.to_owned();
+        }
     }
 
-    for stat in &mut stats.reports {
-        stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
-    }
-
-    Ok(cached::Return::new(stats))
+    Ok(cached::Return::new(languages.into_iter().collect()))
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
