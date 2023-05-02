@@ -90,6 +90,7 @@ struct BadgeQuery {
     color: Option<String>,
     logo: Option<String>,
     r#type: Option<String>,
+    ranking: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -108,6 +109,11 @@ async fn create_badge(
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
     let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
+    let ranking: usize = query
+        .ranking
+        .unwrap_or_else(|| "".to_owned())
+        .parse::<usize>()
+        .unwrap_or(0);
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -168,13 +174,26 @@ async fn create_badge(
         .into_iter()
         .collect::<HashSet<LanguageType>>();
 
-    let mut stats = Language::new();
-    let languages: Vec<(LanguageType, Language)> = entry.value;
+    let languages: Vec<(LanguageType, Language)> = if language_types.is_empty() {
+        entry.value
+    } else {
+        entry
+            .value
+            .into_iter()
+            .filter(|(language_type, _)| language_types.contains(&language_type))
+            .into_iter()
+            .collect()
+    };
+    let ranking_language = if ranking == 0 {
+        "".to_owned()
+    } else {
+        let (ranking_language_type, _) = languages[ranking.clamp(1, languages.len()) - 1];
+        ranking_language_type.name().to_owned()
+    };
 
-    for (language_type, language) in languages {
-        if language_types.is_empty() || language_types.contains(&language_type) {
-            stats += language;
-        }
+    let mut stats = Language::new();
+    for (_, language) in languages {
+        stats += language;
     }
 
     log::info!(
@@ -196,6 +215,7 @@ async fn create_badge(
         &style,
         &color,
         &logo,
+        &ranking_language,
         no_label,
     )?;
 
@@ -237,7 +257,11 @@ fn get_statistics(
         }
     }
 
-    Ok(cached::Return::new(languages.into_iter().collect()))
+    let mut languages_sorted_by_lines_of_code: Vec<(LanguageType, Language)> =
+        languages.into_iter().collect();
+    languages_sorted_by_lines_of_code.sort_by(|(_, a), (_, b)| b.code.cmp(&a.code));
+
+    Ok(cached::Return::new(languages_sorted_by_lines_of_code))
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {
@@ -298,10 +322,15 @@ fn make_badge(
     style: &str,
     color: &str,
     logo: &str,
+    ranking_language: &str,
     no_label: bool,
 ) -> actix_web::Result<String> {
     if *content_type == ContentType::json() {
         return Ok(serde_json::to_string(&stats)?);
+    }
+
+    if !ranking_language.is_empty() {
+        return make_badge_style(label, ranking_language, color, style, logo);
     }
 
     let (amount, label) = match category {
