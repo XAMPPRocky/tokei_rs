@@ -192,15 +192,15 @@ async fn create_badge(
     };
 
     let mut stats = Language::new();
-    for (_, language) in languages {
-        stats += language;
+    for (_, language) in &languages {
+        stats += language.clone();
     }
 
     log::info!(
-        "{url}#{sha} - Languages (most common to least common) {language_types:?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha} - Languages (most common to least common) {languages:#?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
-        language_types = language_types.into_iter(),
+        languages = languages,
         lines = stats.lines(),
         code = stats.code,
         comments = stats.comments,
