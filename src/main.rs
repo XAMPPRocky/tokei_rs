@@ -197,7 +197,7 @@ async fn create_badge(
     }
 
     log::info!(
-        "{url}#{sha} - Types {language_types:?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha} - Languages (most common to least common) {language_types:?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
         language_types = language_types.into_iter(),
