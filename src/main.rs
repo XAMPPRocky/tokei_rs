@@ -186,6 +186,8 @@ async fn create_badge(
     };
     let ranking_language = if ranking == 0 {
         "".to_owned()
+    } else if languages.is_empty() {
+        "No Languages".to_owned()
     } else {
         let (ranking_language_type, _) = languages[ranking.clamp(1, languages.len()) - 1];
         ranking_language_type.name().to_owned()
