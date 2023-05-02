@@ -137,13 +137,12 @@ async fn create_badge(
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    // Check if git commit `sha` matches
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}", sha);
-        let entity_tag = EntityTag::new(false, sha.clone());
+        let sha_tag = EntityTag::new(false, sha.clone());
         let found_match = match if_none_match {
             IfNoneMatch::Any => false,
-            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&entity_tag)),
+            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&sha_tag)),
         };
 
         if found_match {
