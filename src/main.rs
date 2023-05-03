@@ -8,12 +8,13 @@ use actix_web::{
     },
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
-use cached::Cached;
+use cached::{Cached, Return};
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
 use rsbadges::{Badge, Style};
+use std::collections::HashSet;
 use tempfile::TempDir;
-use tokei::{Language, Languages};
+use tokei::{Language, LanguageType, Languages};
 
 const BILLION: usize = 1_000_000_000;
 const BLANKS: &str = "blank lines";
@@ -88,6 +89,7 @@ struct BadgeQuery {
     style: Option<String>,
     color: Option<String>,
     logo: Option<String>,
+    r#type: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -105,6 +107,7 @@ async fn create_badge(
     let style: String = query.style.unwrap_or_else(|| "plastic".to_owned());
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
+    let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -152,18 +155,33 @@ async fn create_badge(
         }
     }
 
-    let entry = get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
+    let entry: Return<Vec<(LanguageType, Language)>> =
+        get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
         log::info!("{}#{} Cache hit", url, sha);
     }
 
-    let stats = entry.value;
+    let language_types: HashSet<LanguageType> = r#type
+        .split(',')
+        .filter_map(|s| str::parse::<LanguageType>(s).ok())
+        .into_iter()
+        .collect::<HashSet<LanguageType>>();
+
+    let mut stats = Language::new();
+    let languages: Vec<(LanguageType, Language)> = entry.value;
+
+    for (language_type, language) in &languages {
+        if language_types.is_empty() || language_types.contains(&language_type) {
+            stats += language.clone();
+        }
+    }
 
     log::info!(
-        "{url}#{sha} - Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha} - Languages {languages:#?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
+        languages = languages,
         lines = stats.lines(),
         code = stats.code,
         comments = stats.comments,
@@ -192,11 +210,14 @@ fn repo_identifier(url: &str, sha: &str) -> String {
     name = "CACHE",
     result = true,
     with_cached_flag = true,
-    type = "cached::TimedSizedCache<String, cached::Return<Language>>",
+    type = "cached::TimedSizedCache<String, cached::Return<Vec<(LanguageType,Language)>>>",
     create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
     convert = r#"{ repo_identifier(url, _sha) }"#
 )]
-fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language>> {
+fn get_statistics(
+    url: &str,
+    _sha: &str,
+) -> eyre::Result<cached::Return<Vec<(LanguageType, Language)>>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -205,20 +226,18 @@ fn get_statistics(url: &str, _sha: &str) -> eyre::Result<cached::Return<Language
         .args(["clone", url, temp_path, "--depth", "1"])
         .output()?;
 
-    let mut stats = Language::new();
     let mut languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
-    for (_, language) in languages {
-        stats += language;
+    let mut iter = languages.iter_mut();
+    while let Some((_, language)) = iter.next() {
+        for report in &mut language.reports {
+            report.name = report.name.strip_prefix(temp_path)?.to_owned();
+        }
     }
 
-    for stat in &mut stats.reports {
-        stat.name = stat.name.strip_prefix(temp_path)?.to_owned();
-    }
-
-    Ok(cached::Return::new(stats))
+    Ok(cached::Return::new(languages.into_iter().collect()))
 }
 
 fn trim_and_float(num: usize, trim: usize) -> f64 {

@@ -32,6 +32,17 @@ Here is an example showing total number of code.
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code)](https://github.com/XAMPPRocky/tokei).
 ```
 
+## Type
+
+You can choose to count lines only for specific language type(s), by using the `?type=` query
+string. Languages are to be separated by a comma.
+Here is an example showing total number of lines for JSON, Rust, and Markdown.
+[![lines of json, rust, and markdown](https://tokei.rs/b1/github/XAMPPRocky/tokei?type=JSON,Rust,Markdown)](https://github.com/XAMPPRocky/tokei).
+
+```sh
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?type=JSON,Rust,Markdown)](https://github.com/XAMPPRocky/tokei).
+```
+
 ## Label
 
 You can customize the badge label by using the `?label=` query string. For example, [![custom label](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&label=custom%20label)](https://github.com/XAMPPRocky/tokei).
