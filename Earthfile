@@ -1,4 +1,4 @@
-VERSION 0.7
+VERSION 0.6
 FROM rust:latest
 WORKDIR /tokei_rs
 ARG repo
