@@ -116,11 +116,10 @@ async fn create_badge(
         .unwrap_or_else(|| "".to_owned())
         .parse::<bool>()
         .unwrap_or(false);
-    let language_rank: usize = query
-        .languageRank
-        .unwrap_or_else(|| "".to_owned())
-        .parse::<usize>()
-        .unwrap_or(1);
+    let language_rank: usize = match query.languageRank {
+        Some(s) => s.parse::<usize>().unwrap_or(0),
+        None => 1,
+    };
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
