@@ -82,6 +82,7 @@ macro_rules! respond {
     }};
 }
 
+#[allow(non_snake_case)]
 #[derive(serde::Deserialize)]
 struct BadgeQuery {
     category: Option<String>,
@@ -90,7 +91,7 @@ struct BadgeQuery {
     color: Option<String>,
     logo: Option<String>,
     r#type: Option<String>,
-    ranking: Option<String>,
+    languageRank: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -109,8 +110,8 @@ async fn create_badge(
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
     let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
-    let ranking: usize = query
-        .ranking
+    let language_rank: usize = query
+        .languageRank
         .unwrap_or_else(|| "".to_owned())
         .parse::<usize>()
         .unwrap_or(0);
@@ -184,12 +185,12 @@ async fn create_badge(
             .into_iter()
             .collect()
     };
-    let ranking_language = if ranking == 0 {
+    let ranking_language = if language_rank == 0 {
         "".to_owned()
     } else if languages.is_empty() {
         "No Languages".to_owned()
     } else {
-        let (ranking_language_type, _) = languages[ranking.clamp(1, languages.len()) - 1];
+        let (ranking_language_type, _) = languages[language_rank.clamp(1, languages.len()) - 1];
         ranking_language_type.name().to_owned()
     };
 
