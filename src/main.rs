@@ -281,16 +281,16 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
 
 fn make_badge_style(
     label: &str,
-    amount: &str,
+    msg: &str,
     color: &str,
     style: &str,
     logo: &str,
 ) -> Result<String, actix_web::Error> {
-    fn badge(label: &str, amount: &str, color: &str) -> Badge {
+    fn badge(label: &str, msg: &str, color: &str) -> Badge {
         Badge {
             label_text: label.to_owned(),
             label_color: GREY.to_owned(),
-            msg_text: amount.to_owned(),
+            msg_text: msg.to_owned(),
             msg_color: match parse(color) {
                 Ok(result) => result.to_hex_string(),
                 Err(_error) => BLUE.to_owned(),
@@ -302,7 +302,7 @@ fn make_badge_style(
     let badge_with_logo = Badge {
         logo: logo.to_owned(),
         embed_logo: !logo.is_empty(),
-        ..badge(label, amount, color)
+        ..badge(label, msg, color)
     };
 
     fn stylize_badge(badge: Badge, style: &str) -> Style {
@@ -318,7 +318,7 @@ fn make_badge_style(
 
     match stylize_badge(badge_with_logo, style).generate_svg() {
         Ok(s) => Ok(s),
-        Err(_e) => Ok(stylize_badge(badge(label, amount, color), style)
+        Err(_e) => Ok(stylize_badge(badge(label, msg, color), style)
             .generate_svg()
             .unwrap()),
     }
