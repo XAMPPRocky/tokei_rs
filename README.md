@@ -75,20 +75,20 @@ You can customize the badge logo (SVG format) by passing its full URL to the `?l
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&logo=https://simpleicons.org/icons/rust.svg)](https://github.com/XAMPPRocky/tokei).
 ```
 
-## Ranking
+## Most Used Language
 
-Instead of showing the number of lines, you can display the name of the n-th most used language by using the `?ranking=` query
-string (e.g. `?ranking=1` for most used language, `?ranking=2` for 2nd most used language etc.).
+Instead of showing the number of lines, you can display the name of the n-th most used language by enabling `?showLanguage=true` and using the `?languageRank=` query
+string (e.g. `?languageRank=1` for most used language, `?languageRank=2` for 2nd most used language etc.).
 
 Here is an example showing the top 3 most used languages in <https://github.com/XAMPPRocky/tokei>.
-[![Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=1&label=Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
-[![2nd Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=2&label=2nd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
-[![3rd Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=3&label=3rd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=1&label=Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![2nd Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=2&label=2nd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![3rd Most Used Language](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=3&label=3rd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
 
 ```sh
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=1&label=Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=2&label=2nd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
-[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?ranking=3&label=3rd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=1&label=Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=2&label=2nd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
+[![](https://tokei.rs/b1/github/XAMPPRocky/tokei?showLanguage=true&languageRank=3&label=3rd%20Most%20Used%20Language)](https://github.com/XAMPPRocky/tokei).
 ```
 
 ## Copyright and License
