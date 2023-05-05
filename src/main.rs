@@ -266,6 +266,11 @@ fn get_statistics(
         for report in &mut language.reports {
             report.name = report.name.strip_prefix(temp_path)?.to_owned();
         }
+        for (_, child) in &mut language.children {
+            for language in child.into_iter() {
+                language.name = language.name.strip_prefix(temp_path)?.to_owned();
+            }
+        }
     }
 
     let mut languages_sorted_by_lines_of_code: Vec<(LanguageType, Language)> =
