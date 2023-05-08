@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use actix_web::{
     get,
@@ -90,6 +90,36 @@ struct BadgeQuery {
     color: Option<String>,
     logo: Option<String>,
     r#type: Option<String>,
+    branch: Option<String>,
+}
+
+fn get_head_branch_name(url: &str) -> String {
+    let git_child = Command::new("git")
+        .args(["ls-remote", "--symref", &url, "HEAD"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let head_child = Command::new("head")
+        .arg("-1")
+        .stdin(Stdio::from(git_child.stdout.unwrap()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let awk_child = Command::new("awk")
+        .arg("{print $2}")
+        .stdin(Stdio::from(head_child.stdout.unwrap()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let awk_output = awk_child.wait_with_output().unwrap();
+
+    std::str::from_utf8(&awk_output.stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -108,6 +138,7 @@ async fn create_badge(
     let color: String = query.color.unwrap_or_else(|| BLUE.to_owned());
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
     let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
+    let branch: String = query.branch.unwrap_or_else(|| "".to_owned());
 
     let content_type = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
@@ -127,7 +158,22 @@ async fn create_badge(
     }
 
     let url = format!("https://{}/{}/{}", domain, user, repo);
-    let ls_remote = Command::new("git").arg("ls-remote").arg(&url).output()?;
+
+    let head_branch: String;
+    let ls_remote = Command::new("git")
+        .args([
+            "ls-remote",
+            "--heads",
+            &url,
+            if branch.is_empty() {
+                head_branch = get_head_branch_name(&url);
+                &head_branch
+            } else {
+                &branch
+            },
+        ])
+        .output()?;
+
     let sha: String = ls_remote
         .stdout
         .iter()
@@ -136,6 +182,19 @@ async fn create_badge(
         .map(|i| ls_remote.stdout[..i].to_owned())
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
+
+    let branch_symref = ls_remote
+        .stdout
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|i| ls_remote.stdout[HASH_LENGTH + 1..i].to_owned())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
+
+    let branch_name = match branch_symref.strip_prefix("refs/heads/") {
+        Some(branch) => branch.to_owned(),
+        None => branch_symref,
+    };
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}", sha);
@@ -149,17 +208,17 @@ async fn create_badge(
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, &sha));
-            log::info!("{}#{} Not Modified", url, sha);
+                .cache_get(&repo_identifier(&url, &sha, &branch_name));
+            log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
             return Ok(respond!(NotModified));
         }
     }
 
     let entry: Return<Vec<(LanguageType, Language)>> =
-        get_statistics(&url, &sha).map_err(actix_web::error::ErrorBadRequest)?;
+        get_statistics(&url, &sha, &branch_name).map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
-        log::info!("{}#{} Cache hit", url, sha);
+        log::info!("{}#{}#{} Cache hit", url, sha, branch_name);
     }
 
     let language_types: HashSet<LanguageType> = r#type
@@ -202,8 +261,8 @@ async fn create_badge(
     Ok(respond!(Ok, content_type, badge, sha))
 }
 
-fn repo_identifier(url: &str, sha: &str) -> String {
-    format!("{}#{}", url, sha)
+fn repo_identifier(url: &str, sha: &str, branch_name: &str) -> String {
+    format!("{}#{}#{}", url, sha, branch_name)
 }
 
 #[cached::proc_macro::cached(
@@ -212,18 +271,27 @@ fn repo_identifier(url: &str, sha: &str) -> String {
     with_cached_flag = true,
     type = "cached::TimedSizedCache<String, cached::Return<Vec<(LanguageType,Language)>>>",
     create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, DAY_IN_SECONDS) }",
-    convert = r#"{ repo_identifier(url, _sha) }"#
+    convert = r#"{ repo_identifier(url, _sha, branch_name) }"#
 )]
 fn get_statistics(
     url: &str,
     _sha: &str,
+    branch_name: &str,
 ) -> eyre::Result<cached::Return<Vec<(LanguageType, Language)>>> {
     log::info!("{} - Cloning", url);
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
-        .args(["clone", url, temp_path, "--depth", "1"])
+        .args([
+            "clone",
+            url,
+            temp_path,
+            "--depth",
+            "1",
+            "--branch",
+            branch_name,
+        ])
         .output()?;
 
     let mut languages = Languages::new();
