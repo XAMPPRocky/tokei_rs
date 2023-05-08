@@ -1,4 +1,4 @@
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output};
 
 use actix_web::{
     get,
@@ -6,7 +6,8 @@ use actix_web::{
         Accept, CacheControl, CacheDirective, ContentType, EntityTag, Header, IfNoneMatch,
         CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION,
     },
-    web, App, HttpRequest, HttpResponse, HttpServer,
+    web::{self},
+    App, HttpRequest, HttpResponse, HttpServer,
 };
 use cached::{Cached, Return};
 use csscolorparser::parse;
@@ -93,35 +94,6 @@ struct BadgeQuery {
     branch: Option<String>,
 }
 
-async fn get_head_branch_name(url: &str) -> String {
-    let git_child: Child = Command::new("git")
-        .args(["ls-remote", "--symref", &url, "HEAD"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let head_child: Child = Command::new("head")
-        .args(["-1"])
-        .stdin(Stdio::from(git_child.stdout.unwrap()))
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let awk_child: Child = Command::new("awk")
-        .args(["{print $2}"])
-        .stdin(Stdio::from(head_child.stdout.unwrap()))
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let awk_output: Output = awk_child.wait_with_output().unwrap();
-
-    std::str::from_utf8(&awk_output.stdout)
-        .unwrap()
-        .trim()
-        .to_owned()
-}
-
 #[get("/b1/{domain}/{user}/{repo}")]
 async fn create_badge(
     request: HttpRequest,
@@ -159,52 +131,66 @@ async fn create_badge(
 
     let url: String = format!("https://{}/{}/{}", domain, user, repo);
 
-    let head_branch: String;
     let ls_remote: Output = Command::new("git")
-        .args([
-            "ls-remote",
-            "--heads",
-            &url,
-            if branch.is_empty() {
-                head_branch = get_head_branch_name(&url).await;
-                &head_branch
-            } else {
-                &branch
-            },
-        ])
+        .args(["ls-remote", "--symref", &url, "HEAD", "refs/heads/**"])
         .output()?;
 
-    let sha_and_symref: String = ls_remote
-        .stdout
-        .iter()
-        .position(|&b| b == b'\n')
-        .filter(|i: &usize| *i > HASH_LENGTH)
-        .map(|i: usize| ls_remote.stdout[..i].to_owned())
-        .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
+    let ls_remote_output: String = String::from_utf8(ls_remote.stdout)
+        .ok()
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
+    (!ls_remote_output.is_empty())
+        .then(|| ())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    let (sha, branch_symref) = match sha_and_symref.split_once("\t") {
-        Some((sha, branch_symref)) => (sha.to_owned(), branch_symref.to_owned()),
-        None => ("".to_owned(), "".to_owned()),
-    };
+    let git_lines: Vec<&str> = ls_remote_output.split("\n").collect();
+    (git_lines.len() > 1)
+        .then(|| ())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    if sha.len() != HASH_LENGTH || branch_symref.is_empty() {
-        actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided."));
+    let mut iter = git_lines.iter();
+    let head_branch: String = match iter.next() {
+        Some(&s) => {
+            let without_prefix: &str = match s.strip_prefix("ref: refs/heads/") {
+                Some(b) => b,
+                None => "",
+            };
+            let without_prefix_and_suffix: &str = match without_prefix.strip_suffix("\tHEAD") {
+                Some(c) => c,
+                None => "",
+            };
+            without_prefix_and_suffix.to_owned()
+        }
+        None => "".to_owned(),
+    };
+    iter.next(); // skip 2nd line with HEAD
+    let branch_name: String = if branch.is_empty() {
+        head_branch
+    } else {
+        branch
+    };
+    let mut sha: &str = "";
+    while let Some(&line) = iter.next() {
+        let (s, bn) = match line.split_once("\trefs/heads/") {
+            Some((s, bn)) => (s, bn),
+            None => ("", ""),
+        };
+        if bn == branch_name {
+            sha = s;
+            break;
+        }
     }
-
-    let branch_name: String = match branch_symref.strip_prefix("refs/heads/") {
-        Some(branch) => branch.to_owned(),
-        None => branch_symref,
-    };
+    (sha.len() == HASH_LENGTH)
+        .then(|| ())
+        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
-        log::debug!("Checking If-None-Match: {}", sha);
+        log::debug!("Checking If-None-Match: {}#{}", sha, branch_name);
         let entity_tag: EntityTag = EntityTag::new(false, format!("{}#{}", sha, branch_name));
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
-            IfNoneMatch::Items(items) => {
-                items.iter().any(|etag: &EntityTag| etag.weak_eq(&entity_tag))
-            }
+            IfNoneMatch::Items(items) => items
+                .iter()
+                .any(|etag: &EntityTag| etag.weak_eq(&entity_tag)),
         };
 
         if found_match {
@@ -222,7 +208,6 @@ async fn create_badge(
 
     if entry.was_cached {
         log::info!("{}#{}#{} Cache hit", url, sha, branch_name);
-        println!("{}#{}#{} Cache hit", url, sha, branch_name);
     }
 
     let language_types: HashSet<LanguageType> = r#type
@@ -261,9 +246,10 @@ async fn create_badge(
         &color,
         &logo,
         no_label,
-    )?;
+    )
+    .await?;
 
-    Ok(respond!(Ok, content_type, badge, sha))
+    Ok(respond!(Ok, content_type, badge, sha.to_owned()))
 }
 
 fn repo_identifier(url: &str, sha: &str, branch_name: &str) -> String {
@@ -317,7 +303,7 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
-fn make_badge_style(
+async fn make_badge_style(
     label: &str,
     amount: &str,
     color: &str,
@@ -363,7 +349,7 @@ fn make_badge_style(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn make_badge(
+async fn make_badge(
     content_type: &ContentType,
     stats: &Language,
     category: &str,
@@ -395,5 +381,5 @@ fn make_badge(
         amount.to_string()
     };
 
-    make_badge_style(label, &amount, color, style, logo)
+    make_badge_style(label, &amount, color, style, logo).await
 }
