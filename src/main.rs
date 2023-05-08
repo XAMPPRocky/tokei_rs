@@ -199,11 +199,11 @@ async fn create_badge(
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}", sha);
-        let sha_tag: EntityTag = EntityTag::new(false, sha.clone());
+        let entity_tag: EntityTag = EntityTag::new(false, format!("{}#{}", sha, branch_name));
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
             IfNoneMatch::Items(items) => {
-                items.iter().any(|etag: &EntityTag| etag.weak_eq(&sha_tag))
+                items.iter().any(|etag: &EntityTag| etag.weak_eq(&entity_tag))
             }
         };
 
@@ -222,6 +222,7 @@ async fn create_badge(
 
     if entry.was_cached {
         log::info!("{}#{}#{} Cache hit", url, sha, branch_name);
+        println!("{}#{}#{} Cache hit", url, sha, branch_name);
     }
 
     let language_types: HashSet<LanguageType> = r#type
