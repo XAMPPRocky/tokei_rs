@@ -93,7 +93,7 @@ struct BadgeQuery {
     branch: Option<String>,
 }
 
-fn get_head_branch_name(url: &str) -> String {
+async fn get_head_branch_name(url: &str) -> String {
     let git_child: Child = Command::new("git")
         .args(["ls-remote", "--symref", &url, "HEAD"])
         .stdout(Stdio::piped())
@@ -166,7 +166,7 @@ async fn create_badge(
             "--heads",
             &url,
             if branch.is_empty() {
-                head_branch = get_head_branch_name(&url);
+                head_branch = get_head_branch_name(&url).await;
                 &head_branch
             } else {
                 &branch
