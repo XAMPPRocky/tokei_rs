@@ -187,6 +187,7 @@ async fn create_badge(
         .stdout
         .iter()
         .position(|&b| b == b'\n')
+        .filter(|i: &usize| *i >= HASH_LENGTH + 1)
         .map(|i: usize| ls_remote.stdout[HASH_LENGTH + 1..i].to_owned())
         .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
@@ -201,7 +202,9 @@ async fn create_badge(
         let sha_tag: EntityTag = EntityTag::new(false, sha.clone());
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
-            IfNoneMatch::Items(items) => items.iter().any(|etag: &EntityTag| etag.weak_eq(&sha_tag)),
+            IfNoneMatch::Items(items) => {
+                items.iter().any(|etag: &EntityTag| etag.weak_eq(&sha_tag))
+            }
         };
 
         if found_match {
