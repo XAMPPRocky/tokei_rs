@@ -1,4 +1,4 @@
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 use actix_web::{
     get,
@@ -94,27 +94,27 @@ struct BadgeQuery {
 }
 
 fn get_head_branch_name(url: &str) -> String {
-    let git_child = Command::new("git")
+    let git_child: Child = Command::new("git")
         .args(["ls-remote", "--symref", &url, "HEAD"])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
 
-    let head_child = Command::new("head")
+    let head_child: Child = Command::new("head")
         .arg("-1")
         .stdin(Stdio::from(git_child.stdout.unwrap()))
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
 
-    let awk_child = Command::new("awk")
+    let awk_child: Child = Command::new("awk")
         .arg("{print $2}")
         .stdin(Stdio::from(head_child.stdout.unwrap()))
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
 
-    let awk_output = awk_child.wait_with_output().unwrap();
+    let awk_output: Output = awk_child.wait_with_output().unwrap();
 
     std::str::from_utf8(&awk_output.stdout)
         .unwrap()
@@ -140,7 +140,7 @@ async fn create_badge(
     let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
     let branch: String = query.branch.unwrap_or_else(|| "".to_owned());
 
-    let content_type = if let Ok(accept) = Accept::parse(&request) {
+    let content_type: ContentType = if let Ok(accept) = Accept::parse(&request) {
         if accept == Accept::json() {
             ContentType::json()
         } else {
@@ -157,10 +157,10 @@ async fn create_badge(
         domain += ".com";
     }
 
-    let url = format!("https://{}/{}/{}", domain, user, repo);
+    let url: String = format!("https://{}/{}/{}", domain, user, repo);
 
     let head_branch: String;
-    let ls_remote = Command::new("git")
+    let ls_remote: Output = Command::new("git")
         .args([
             "ls-remote",
             "--heads",
@@ -178,30 +178,30 @@ async fn create_badge(
         .stdout
         .iter()
         .position(|&b| b == b'\t')
-        .filter(|i| *i == HASH_LENGTH)
-        .map(|i| ls_remote.stdout[..i].to_owned())
-        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .filter(|i: &usize| *i == HASH_LENGTH)
+        .map(|i: usize| ls_remote.stdout[..i].to_owned())
+        .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    let branch_symref = ls_remote
+    let branch_symref: String = ls_remote
         .stdout
         .iter()
         .position(|&b| b == b'\n')
-        .map(|i| ls_remote.stdout[HASH_LENGTH + 1..i].to_owned())
-        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|i: usize| ls_remote.stdout[HASH_LENGTH + 1..i].to_owned())
+        .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    let branch_name = match branch_symref.strip_prefix("refs/heads/") {
+    let branch_name: String = match branch_symref.strip_prefix("refs/heads/") {
         Some(branch) => branch.to_owned(),
         None => branch_symref,
     };
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}", sha);
-        let sha_tag = EntityTag::new(false, sha.clone());
-        let found_match = match if_none_match {
+        let sha_tag: EntityTag = EntityTag::new(false, sha.clone());
+        let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
-            IfNoneMatch::Items(items) => items.iter().any(|etag| etag.weak_eq(&sha_tag)),
+            IfNoneMatch::Items(items) => items.iter().any(|etag: &EntityTag| etag.weak_eq(&sha_tag)),
         };
 
         if found_match {
@@ -223,11 +223,11 @@ async fn create_badge(
 
     let language_types: HashSet<LanguageType> = r#type
         .split(',')
-        .filter_map(|s| str::parse::<LanguageType>(s).ok())
+        .filter_map(|s: &str| str::parse::<LanguageType>(s).ok())
         .into_iter()
         .collect::<HashSet<LanguageType>>();
 
-    let mut stats = Language::new();
+    let mut stats: Language = Language::new();
     let languages: Vec<(LanguageType, Language)> = entry.value;
 
     for (language_type, language) in &languages {
@@ -247,7 +247,7 @@ async fn create_badge(
         blanks = stats.blanks
     );
 
-    let badge = make_badge(
+    let badge: String = make_badge(
         &content_type,
         &stats,
         &category,
@@ -279,8 +279,8 @@ fn get_statistics(
     branch_name: &str,
 ) -> eyre::Result<cached::Return<Vec<(LanguageType, Language)>>> {
     log::info!("{} - Cloning", url);
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path().to_str().unwrap();
+    let temp_dir: TempDir = TempDir::new()?;
+    let temp_path: &str = temp_dir.path().to_str().unwrap();
 
     Command::new("git")
         .args([
@@ -294,7 +294,7 @@ fn get_statistics(
         ])
         .output()?;
 
-    let mut languages = Languages::new();
+    let mut languages: Languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
     languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
 
@@ -332,7 +332,7 @@ fn make_badge_style(
         }
     }
 
-    let badge_with_logo = Badge {
+    let badge_with_logo: Badge = Badge {
         logo: logo.to_owned(),
         embed_logo: !logo.is_empty(),
         ..badge(label, amount, color)
@@ -380,7 +380,7 @@ fn make_badge(
         _ => (stats.lines(), if no_label { LINES } else { label }),
     };
 
-    let amount = if amount >= BILLION {
+    let amount: String = if amount >= BILLION {
         format!("{:.1}B", trim_and_float(amount, BILLION))
     } else if amount >= MILLION {
         format!("{:.1}M", trim_and_float(amount, MILLION))
