@@ -101,14 +101,14 @@ fn get_head_branch_name(url: &str) -> String {
         .unwrap();
 
     let head_child: Child = Command::new("head")
-        .arg("-1")
+        .args(["-1"])
         .stdin(Stdio::from(git_child.stdout.unwrap()))
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
 
     let awk_child: Child = Command::new("awk")
-        .arg("{print $2}")
+        .args(["{print $2}"])
         .stdin(Stdio::from(head_child.stdout.unwrap()))
         .stdout(Stdio::piped())
         .spawn()
@@ -174,23 +174,23 @@ async fn create_badge(
         ])
         .output()?;
 
-    let sha: String = ls_remote
+    let sha_and_symref: String = ls_remote
         .stdout
         .iter()
-        .position(|&b| b == b'\t')
-        .filter(|i: &usize| *i == HASH_LENGTH)
+        .position(|&b| b == b'\n')
+        .filter(|i: &usize| *i > HASH_LENGTH)
         .map(|i: usize| ls_remote.stdout[..i].to_owned())
         .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
-    let branch_symref: String = ls_remote
-        .stdout
-        .iter()
-        .position(|&b| b == b'\n')
-        .filter(|i: &usize| *i >= HASH_LENGTH + 1)
-        .map(|i: usize| ls_remote.stdout[HASH_LENGTH + 1..i].to_owned())
-        .and_then(|bytes: Vec<u8>| String::from_utf8(bytes).ok())
-        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
+    let (sha, branch_symref) = match sha_and_symref.split_once("\t") {
+        Some((sha, branch_symref)) => (sha.to_owned(), branch_symref.to_owned()),
+        None => ("".to_owned(), "".to_owned()),
+    };
+
+    if sha.len() != HASH_LENGTH || branch_symref.is_empty() {
+        actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided."));
+    }
 
     let branch_name: String = match branch_symref.strip_prefix("refs/heads/") {
         Some(branch) => branch.to_owned(),
@@ -240,9 +240,10 @@ async fn create_badge(
     }
 
     log::info!(
-        "{url}#{sha} - Languages {languages:#?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
+        "{url}#{sha}#{branch_name} - Languages {languages:#?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
+        branch_name = branch_name,
         languages = languages,
         lines = stats.lines(),
         code = stats.code,
