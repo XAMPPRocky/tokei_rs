@@ -129,10 +129,10 @@ async fn create_badge(
         domain += ".com";
     }
 
-    let url: String = format!("https://{}/{}/{}", domain, user, repo);
+    let url: &str = &format!("https://{}/{}/{}", domain, user, repo);
 
     let ls_remote: Output = Command::new("git")
-        .args(["ls-remote", "--symref", &url, "HEAD", "refs/heads/**"])
+        .args(["ls-remote", "--symref", url, "HEAD", "refs/heads/**"])
         .output()?;
 
     let ls_remote_output: String = String::from_utf8(ls_remote.stdout)
@@ -148,7 +148,7 @@ async fn create_badge(
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
     let mut iter = git_lines.iter();
-    let head_branch: String = match iter.next() {
+    let head_branch: &str = match iter.next() {
         Some(&s) => {
             let without_prefix: &str = match s.strip_prefix("ref: refs/heads/") {
                 Some(b) => b,
@@ -158,15 +158,15 @@ async fn create_badge(
                 Some(c) => c,
                 None => "",
             };
-            without_prefix_and_suffix.to_owned()
+            without_prefix_and_suffix
         }
-        None => "".to_owned(),
+        None => "",
     };
     iter.next(); // skip 2nd line with HEAD
-    let branch_name: String = if branch.is_empty() {
+    let branch_name: &str = if branch.is_empty() {
         head_branch
     } else {
-        branch
+        &branch
     };
     let mut sha: &str = "";
     while let Some(&line) = iter.next() {
@@ -185,7 +185,7 @@ async fn create_badge(
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}#{}", sha, branch_name);
-        let entity_tag: EntityTag = EntityTag::new(false, format!("{}#{}", sha, branch_name));
+        let entity_tag: EntityTag = EntityTag::new(false, etag_identifier(sha, branch_name));
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
             IfNoneMatch::Items(items) => items
@@ -197,7 +197,7 @@ async fn create_badge(
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, &sha, &branch_name));
+                .cache_get(&repo_identifier(&url, sha, branch_name));
             log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
             return Ok(respond!(NotModified));
         }
@@ -249,11 +249,20 @@ async fn create_badge(
     )
     .await?;
 
-    Ok(respond!(Ok, content_type, badge, sha.to_owned()))
+    Ok(respond!(
+        Ok,
+        content_type,
+        badge,
+        etag_identifier(sha, branch_name)
+    ))
 }
 
 fn repo_identifier(url: &str, sha: &str, branch_name: &str) -> String {
     format!("{}#{}#{}", url, sha, branch_name)
+}
+
+fn etag_identifier(sha: &str, branch_name: &str) -> String {
+    format!("{}#{}", sha, branch_name)
 }
 
 #[cached::proc_macro::cached(
