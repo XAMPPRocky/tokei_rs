@@ -39,6 +39,7 @@ docker:
     FROM ubuntu:jammy
     EXPOSE 8000
     COPY +build/tokei_rs tokei_rs
+    RUN apt-get update && apt-get upgrade -y && apt-get install -y git
     ENTRYPOINT ["./tokei_rs"]
     SAVE IMAGE --push $repo
 
