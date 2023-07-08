@@ -85,6 +85,7 @@ macro_rules! respond {
 
 #[allow(non_snake_case)]
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BadgeQuery {
     category: Option<String>,
     label: Option<String>,
@@ -92,8 +93,8 @@ struct BadgeQuery {
     color: Option<String>,
     logo: Option<String>,
     r#type: Option<String>,
-    showLanguage: Option<String>,
-    languageRank: Option<String>,
+    show_language: Option<String>,
+    language_rank: Option<String>,
     branch: Option<String>,
 }
 
@@ -114,11 +115,11 @@ async fn create_badge(
     let logo: String = query.logo.unwrap_or_else(|| "".to_owned());
     let r#type: String = query.r#type.unwrap_or_else(|| "".to_owned());
     let show_language: bool = query
-        .showLanguage
+        .show_language
         .unwrap_or_else(|| "".to_owned())
         .parse::<bool>()
         .unwrap_or(false);
-    let language_rank: usize = match query.languageRank {
+    let language_rank: usize = match query.language_rank {
         Some(s) => s.parse::<usize>().unwrap_or(0),
         None => 1,
     };
