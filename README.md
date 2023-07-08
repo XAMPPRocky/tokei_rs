@@ -43,6 +43,17 @@ Here is an example showing total number of lines for JSON, Rust, and Markdown.
 [![](https://tokei.rs/b1/github/XAMPPRocky/tokei?type=JSON,Rust,Markdown)](https://github.com/XAMPPRocky/tokei).
 ```
 
+## Branch
+
+You can count lines from a specific branch by using the `?branch=` query
+string. If no branch is specified, the default `HEAD` branch will be used.
+Here is an example for the `beta` branch.
+[![beta](https://tokei.rs/b1/github/rust-lang/rust?branch=beta)](https://github.com/rust-lang/rust).
+
+```sh
+[![](https://tokei.rs/b1/github/rust-lang/rust?branch=beta)](https://github.com/rust-lang/rust).
+```
+
 ## Label
 
 You can customize the badge label by using the `?label=` query string. For example, [![custom label](https://tokei.rs/b1/github/XAMPPRocky/tokei?category=code&label=custom%20label)](https://github.com/XAMPPRocky/tokei).
