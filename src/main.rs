@@ -239,7 +239,7 @@ async fn create_badge(
             .collect()
     };
     let ranking_language = if !show_language {
-        "".to_owned()
+        String::new()
     } else if languages.is_empty() {
         "No Languages".to_owned()
     } else if language_rank == 0 || language_rank > languages.len() {
