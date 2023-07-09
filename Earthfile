@@ -1,13 +1,14 @@
-VERSION 0.6
+VERSION 0.7
 FROM rust:latest
 WORKDIR /tokei_rs
-ARG repo
 
 install-chef:
+    ARG repo
     RUN cargo install cargo-chef
     SAVE IMAGE --push $repo/cache/install-chef
 
 prepare:
+    ARG repo
     FROM +install-chef
     COPY --dir . .
     RUN cargo chef prepare --recipe-path recipe.json
@@ -15,6 +16,7 @@ prepare:
     SAVE IMAGE --push $repo/cache/prepare
 
 build-deps:
+    ARG repo
     FROM +install-chef
     COPY +prepare/recipe.json ./
 
@@ -24,6 +26,7 @@ build-deps:
     SAVE IMAGE --push $repo/cache/deps
 
 build:
+    ARG repo
     FROM +build-deps
 
     # copy project
@@ -36,6 +39,7 @@ build:
     SAVE IMAGE --push $repo/cache/build
 
 docker:
+    ARG repo
     FROM ubuntu:jammy
     EXPOSE 8000
     COPY +build/tokei_rs tokei_rs
@@ -44,6 +48,7 @@ docker:
     SAVE IMAGE --push $repo
 
 compose:
+    ARG repo
     FROM earthly/dind:alpine
     WORKDIR /test
     COPY compose.yml ./
