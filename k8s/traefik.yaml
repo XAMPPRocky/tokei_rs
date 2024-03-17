@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app: traefik
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      containers:
+        - name: traefik
+          image: traefik:v2.11
+          args:
+            - --entrypoints.web.address=:80
+            - --entrypoints.web.http.redirections.entryPoint.to=websecure
+            - --entrypoints.websecure.address=:443
+            - --providers.kubernetesingress
+            - --log.level=DEBUG
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+spec:
+  type: LoadBalancer
+  ipFamilyPolicy: PreferDualStack
+  selector:
+    app: traefik
+  ports:
+    - protocol: TCP
+      port: 80
+      name: web
+      targetPort: 80
+    - protocol: TCP
+      port: 443
+      name: websecure
+      targetPort: 443

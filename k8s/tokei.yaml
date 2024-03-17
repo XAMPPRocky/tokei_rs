@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tokei
+  labels:
+    app: xampprocky
+    name: tokei
+
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: xampprocky
+      task: tokei
+  template:
+    metadata:
+      labels:
+        app: xampprocky
+        task: tokei
+    spec:
+      containers:
+        - name: tokei
+          image: ghcr.io/xampprocky/tokei_rs:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          volumeMounts:
+            - mountPath: /tmp
+              name: tmp
+              subPath: tmp
+
+      volumes:
+        - name: tmp
+          hostPath:
+            path: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tokei
+
+spec:
+  ports:
+    - name: http
+      port: 8000
+  selector:
+    app: xampprocky
+    task: tokei
